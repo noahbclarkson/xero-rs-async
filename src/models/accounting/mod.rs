@@ -1,0 +1,35 @@
+//! Data models for the Xero Accounting API.
+
+pub mod account;
+pub mod attachment;
+pub mod bank_transaction;
+pub mod bank_transfer;
+pub mod batch_payment;
+pub mod branding_theme;
+pub mod budget;
+pub mod common;
+pub mod contact;
+pub mod contact_group;
+pub mod credit_note;
+pub mod currency;
+pub mod employee;
+pub mod expense_claim;
+pub mod history;
+pub mod invoice;
+pub mod item;
+pub mod journal;
+pub mod linked_transaction;
+pub mod manual_journal;
+pub mod organisation;
+pub mod overpayment;
+pub mod payment;
+pub mod payment_service;
+pub mod prepayment;
+pub mod purchase_order;
+pub mod quote;
+pub mod receipt;
+pub mod repeating_invoice;
+pub mod report;
+pub mod tax_rate;
+pub mod tracking_category;
+pub mod user;
