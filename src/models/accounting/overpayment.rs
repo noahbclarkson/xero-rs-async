@@ -47,7 +47,8 @@ pub struct Overpayment {
     #[serde(with = "xero_date_format_opt", default, rename = "UpdatedDateUTC")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_date_utc: Option<DateTime<Utc>>,
-    pub currency_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub currency_code: Option<String>,
     #[serde(rename = "OverpaymentID")]
     pub overpayment_id: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
