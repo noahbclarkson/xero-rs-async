@@ -36,7 +36,8 @@ pub struct Prepayment {
     pub date: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<PrepaymentStatus>,
-    pub line_amount_types: LineAmountType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_amount_types: Option<LineAmountType>,
     pub line_items: Vec<LineItem>,
     pub sub_total: f64,
     pub total_tax: f64,
