@@ -42,11 +42,11 @@ pub struct Invoice {
     #[serde(with = "xero_date_format_opt", default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub due_date: Option<DateTime<Utc>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_amount_types: Option<LineAmountType>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invoice_number: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
     #[serde(rename = "BrandingThemeID", skip_serializing_if = "Option::is_none")]
     pub branding_theme_id: Option<Uuid>,

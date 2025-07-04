@@ -95,10 +95,13 @@ pub struct Contact {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 #[serde(rename_all = "PascalCase")]
 pub struct ContactPerson {
-    pub first_name: String,
-    pub last_name: String,
-    pub email_address: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub first_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub email_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub include_in_emails: Option<bool>,
 }
 

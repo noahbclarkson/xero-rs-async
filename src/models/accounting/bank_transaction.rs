@@ -88,9 +88,8 @@ pub struct BankTransaction {
     pub has_attachments: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_payment: Option<BatchPayment>,
-    // FIX: Add the missing 'Payments' field. It's not always present, so it needs a default.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub payments: Vec<Payment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payments: Option<Vec<Payment>>,
 }
 
 // Wrapper for the response

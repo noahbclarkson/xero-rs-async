@@ -39,12 +39,11 @@ pub enum PaymentTermType {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "PascalCase")]
 pub enum LineAmountType {
     Exclusive,
     Inclusive,
     NoTax,
-    None, // FIX: Added this variant
+    None,
 }
 
 // Custom deserializer to handle both "Exclusive" and "EXCLUSIVE" etc.
@@ -58,10 +57,10 @@ impl<'de> Deserialize<'de> for LineAmountType {
             "EXCLUSIVE" => Ok(LineAmountType::Exclusive),
             "INCLUSIVE" => Ok(LineAmountType::Inclusive),
             "NOTAX" => Ok(LineAmountType::NoTax),
-            "NONE" => Ok(LineAmountType::None), // FIX: Handle the "NONE" variant
+            "NONE" => Ok(LineAmountType::None),
             _ => Err(serde::de::Error::unknown_variant(
                 &s,
-                &["Exclusive", "Inclusive", "NoTax", "None"], // FIX: Update expected variants
+                &["Exclusive", "Inclusive", "NoTax", "None"],
             )),
         }
     }
