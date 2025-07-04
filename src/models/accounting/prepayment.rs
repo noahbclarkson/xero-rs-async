@@ -39,7 +39,8 @@ pub struct Prepayment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_amount_types: Option<LineAmountType>,
     pub line_items: Vec<LineItem>,
-    pub sub_total: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_total: Option<f64>,
     pub total_tax: f64,
     pub total: f64,
     #[serde(with = "xero_date_format_opt", default, rename = "UpdatedDateUTC")]
