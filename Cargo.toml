@@ -18,11 +18,11 @@ path = "src/bin/auth.rs"
 
 [dependencies]
 chrono = { version = "0.4.41", features = ["serde"] }
-reqwest = { version = "0.12.20", features = ["json", "multipart"] }
+reqwest = { version = "0.12.22", features = ["json", "multipart"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 thiserror = "2.0.12"
-tokio = { version = "1.45.1", features = ["fs", "sync", "macros", "rt-multi-thread"] }
+tokio = { version = "1.46.0", features = ["fs", "sync", "macros", "rt-multi-thread"] }
 uuid = { version = "1.17", features = ["v4", "serde"] }
 dashmap = "6.1"
 urlencoding = "2.1.3"

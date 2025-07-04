@@ -1,9 +1,12 @@
+// src/models/accounting/bank_transaction.rs
+
 //! Model for the BankTransaction resource.
 
 use super::account::Account;
 use super::batch_payment::BatchPayment;
 use super::common::{LineAmountType, LineItem};
 use super::contact::Contact;
+use super::payment::Payment; // FIX: Add this import
 use crate::util::{xero_date_format, xero_date_format_opt};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -85,6 +88,9 @@ pub struct BankTransaction {
     pub has_attachments: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_payment: Option<BatchPayment>,
+    // FIX: Add the missing 'Payments' field. It's not always present, so it needs a default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub payments: Vec<Payment>,
 }
 
 // Wrapper for the response

@@ -34,7 +34,8 @@ pub struct Prepayment {
     pub contact: Option<Contact>,
     #[serde(with = "xero_date_format")]
     pub date: DateTime<Utc>,
-    pub status: PrepaymentStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<PrepaymentStatus>,
     pub line_amount_types: LineAmountType,
     pub line_items: Vec<LineItem>,
     pub sub_total: f64,

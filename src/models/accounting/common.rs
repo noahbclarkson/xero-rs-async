@@ -1,3 +1,5 @@
+// src/models/accounting/common.rs
+
 //! Contains common data structures shared across multiple Accounting API endpoints.
 
 use crate::util::xero_date_format;
@@ -42,6 +44,7 @@ pub enum LineAmountType {
     Exclusive,
     Inclusive,
     NoTax,
+    None, // FIX: Added this variant
 }
 
 // Custom deserializer to handle both "Exclusive" and "EXCLUSIVE" etc.
@@ -55,9 +58,10 @@ impl<'de> Deserialize<'de> for LineAmountType {
             "EXCLUSIVE" => Ok(LineAmountType::Exclusive),
             "INCLUSIVE" => Ok(LineAmountType::Inclusive),
             "NOTAX" => Ok(LineAmountType::NoTax),
+            "NONE" => Ok(LineAmountType::None), // FIX: Handle the "NONE" variant
             _ => Err(serde::de::Error::unknown_variant(
                 &s,
-                &["Exclusive", "Inclusive", "NoTax"],
+                &["Exclusive", "Inclusive", "NoTax", "None"], // FIX: Update expected variants
             )),
         }
     }
