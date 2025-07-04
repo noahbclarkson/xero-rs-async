@@ -41,7 +41,8 @@ pub struct Overpayment {
     pub line_items: Vec<LineItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sub_total: Option<f64>,
-    pub total_tax: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tax: Option<f64>,
     pub total: f64,
     #[serde(with = "xero_date_format_opt", default, rename = "UpdatedDateUTC")]
     #[serde(skip_serializing_if = "Option::is_none")]
