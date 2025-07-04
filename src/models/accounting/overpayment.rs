@@ -53,7 +53,8 @@ pub struct Overpayment {
     pub overpayment_id: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub currency_rate: Option<f64>,
-    pub remaining_credit: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_credit: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allocations: Vec<Allocation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
