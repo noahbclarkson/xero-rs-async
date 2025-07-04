@@ -41,8 +41,8 @@ pub struct ExpenseClaim {
     #[serde(with = "xero_date_format_opt", default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reporting_date: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub payments: Vec<Payment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payments: Option<Vec<Payment>>,
 }
 
 // Wrapper for the response

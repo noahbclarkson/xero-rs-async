@@ -67,12 +67,12 @@ pub struct Payment {
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct PaymentsResponse {
-    pub payments: Vec<Payment>,
+    pub payments: Option<Vec<Payment>>,
 }
 
 // Wrapper for the request
 #[derive(Serialize)]
-#[serde(rename_all = "PascalCase")]
+#[serde(rename_all = "PascalCase", default)]
 pub(crate) struct PaymentsRequest {
-    pub payments: Vec<Payment>,
+    pub payments: Option<Vec<Payment>>,
 }

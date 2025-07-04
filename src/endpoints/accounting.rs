@@ -1547,7 +1547,7 @@ impl AccountingApi {
         let resp: payment::PaymentsResponse = self
             .send_request(Method::GET, tenant_id, &path, Some(&query), None::<()>)
             .await?;
-        Ok(resp.payments)
+        Ok(resp.payments.unwrap_or_default())
     }
 
     /// Creates one or more new payments.
@@ -1564,7 +1564,7 @@ impl AccountingApi {
         let body = if payments.len() == 1 {
             serde_json::to_value(payments.into_iter().next().unwrap())?
         } else {
-            serde_json::to_value(payment::PaymentsRequest { payments })?
+            serde_json::to_value(payment::PaymentsRequest { payments: Some(payments) })?
         };
         let resp: payment::PaymentsResponse = self
             .send_request(
@@ -1575,7 +1575,7 @@ impl AccountingApi {
                 Some(body),
             )
             .await?;
-        Ok(resp.payments)
+        Ok(resp.payments.unwrap_or_default())
     }
 
     /// Deletes (reverses) a payment.
@@ -1596,7 +1596,7 @@ impl AccountingApi {
         let resp: payment::PaymentsResponse = self
             .send_request(Method::POST, tenant_id, &path, None, Some(body))
             .await?;
-        Ok(resp.payments)
+        Ok(resp.payments.unwrap_or_default())
     }
 
     // --- Payment Services ---

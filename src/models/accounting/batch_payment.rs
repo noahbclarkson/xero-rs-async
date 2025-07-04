@@ -25,7 +25,8 @@ pub enum BatchPaymentStatus {
 #[serde(rename_all = "PascalCase")]
 pub struct BatchPayment {
     pub account: Account,
-    pub payments: Vec<PaymentDetail>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payments: Option<Vec<PaymentDetail>>,
     #[serde(with = "xero_date_format")]
     pub date: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
