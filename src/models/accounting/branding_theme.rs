@@ -16,7 +16,8 @@ pub enum BrandingThemeType {
 pub struct BrandingTheme {
     #[serde(rename = "BrandingThemeID")]
     pub branding_theme_id: Uuid,
-    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo_url: Option<String>,
     #[serde(rename = "Type", default)]
