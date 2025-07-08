@@ -1145,7 +1145,7 @@ impl AccountingApi {
         };
         let resp: invoice::InvoicesResponse = self
             .send_request(
-                Method::PUT,
+                Method::POST,
                 tenant_id,
                 "/Invoices",
                 Some(&query),
