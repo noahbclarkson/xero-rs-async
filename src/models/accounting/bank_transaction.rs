@@ -87,9 +87,9 @@ pub struct BankTransaction {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_attachments: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub batch_payment: Option<BatchPayment>,
+    pub batch_payment: Option<Box<BatchPayment>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payments: Option<Vec<Payment>>,
+    pub payments: Option<Vec<Box<Payment>>>,
 }
 
 // Wrapper for the response

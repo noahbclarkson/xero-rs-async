@@ -58,7 +58,7 @@ pub struct Overpayment {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allocations: Vec<Allocation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payments: Option<Vec<Payment>>,
+    pub payments: Option<Vec<Box<Payment>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_attachments: Option<bool>,
 }

@@ -73,13 +73,13 @@ pub struct Invoice {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_attachments: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payments: Option<Vec<Payment>>,
+    pub payments: Option<Vec<Box<Payment>>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub credit_notes: Vec<CreditNote>,
+    pub credit_notes: Vec<Box<CreditNote>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub prepayments: Vec<Prepayment>,
+    pub prepayments: Vec<Box<Prepayment>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub overpayments: Vec<Overpayment>,
+    pub overpayments: Vec<Box<Overpayment>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub amount_due: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]

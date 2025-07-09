@@ -19,7 +19,7 @@ pub struct Report {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_date_utc: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rows: Vec<ReportRow>,
+    pub rows: Vec<Box<ReportRow>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<ReportField>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -36,9 +36,9 @@ pub struct ReportRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cells: Vec<ReportCell>,
+    pub cells: Vec<Box<ReportCell>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rows: Vec<ReportRow>,
+    pub rows: Vec<Box<ReportRow>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

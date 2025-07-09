@@ -36,13 +36,13 @@ pub struct Payment {
     #[serde(rename = "PaymentID", skip_serializing_if = "Option::is_none")]
     pub payment_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub invoice: Option<Invoice>,
+    pub invoice: Option<Box<Invoice>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub credit_note: Option<CreditNote>,
+    pub credit_note: Option<Box<CreditNote>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub prepayment: Option<Prepayment>,
+    pub prepayment: Option<Box<Prepayment>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub overpayment: Option<Overpayment>,
+    pub overpayment: Option<Box<Overpayment>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<Account>,
     #[serde(with = "xero_date_format")]

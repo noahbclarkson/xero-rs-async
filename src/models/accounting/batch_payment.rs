@@ -57,7 +57,7 @@ pub struct BatchPayment {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct PaymentDetail {
-    pub invoice: Invoice,
+    pub invoice: Box<Invoice>,
     pub amount: f64,
     #[serde(rename = "PaymentID", skip_serializing_if = "Option::is_none")]
     pub payment_id: Option<Uuid>,

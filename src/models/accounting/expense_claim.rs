@@ -23,7 +23,7 @@ pub struct ExpenseClaim {
     #[serde(rename = "ExpenseClaimID", skip_serializing_if = "Option::is_none")]
     pub expense_claim_id: Option<Uuid>,
     pub user: User,
-    pub receipts: Vec<Receipt>,
+    pub receipts: Vec<Box<Receipt>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<ExpenseClaimStatus>,
     #[serde(with = "xero_date_format_opt", default, rename = "UpdatedDateUTC")]
@@ -42,7 +42,7 @@ pub struct ExpenseClaim {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reporting_date: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payments: Option<Vec<Payment>>,
+    pub payments: Option<Vec<Box<Payment>>>
 }
 
 // Wrapper for the response
