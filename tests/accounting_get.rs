@@ -131,7 +131,7 @@ async fn get_branding_themes() {
 
     let themes = result.expect("API call to get branding themes failed");
     assert!(
-        themes.iter().any(|t| t.name == "Standard"),
+        themes.iter().any(|t| t.name.as_deref() == Some("Standard")),
         "Expected to find the 'Standard' branding theme."
     );
     println!("Successfully retrieved {} branding themes.", themes.len());
@@ -330,7 +330,7 @@ async fn get_branding_theme_payment_services() {
         .expect("Failed to get branding themes to test payment services");
     let standard_theme = themes
         .iter()
-        .find(|t| t.name == "Standard")
+        .find(|t| t.name.as_deref() == Some("Standard"))
         .expect("Standard branding theme not found");
     let theme_id = standard_theme.branding_theme_id;
 
@@ -342,7 +342,7 @@ async fn get_branding_theme_payment_services() {
     println!(
         "Successfully retrieved {} payment services for theme '{}'.",
         services.len(),
-        standard_theme.name
+        standard_theme.name.as_deref().unwrap_or("Unknown")
     );
 }
 
