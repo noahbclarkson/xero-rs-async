@@ -1,6 +1,6 @@
 //! The main asynchronous Xero API client.
 
-use crate::auth::TokenManager;
+use crate::auth::{TokenManager, TokenSet};
 use crate::endpoints::{
     accounting::AccountingApi,
     assets::AssetsApi,
@@ -12,10 +12,10 @@ use crate::rate_limiter::RateLimiter;
 
 use log::{debug, info};
 use reqwest::Client;
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
-// Duplicate imports removed above. Only one import per item remains.
 
 /// The main client for interacting with all Xero APIs.
 #[derive(Debug, Clone)]
@@ -23,6 +23,15 @@ pub struct XeroClient {
     pub(crate) http_client: Client,
     pub token_manager: Arc<TokenManager>,
     pub(crate) rate_limiter: Arc<RateLimiter>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Connection {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub tenant_type: String,
+    pub tenant_name: Option<String>,
 }
 
 impl XeroClient {
@@ -60,6 +69,27 @@ impl XeroClient {
         })
     }
 
+    /// Retrieves the list of tenants (organisations) connected to the app.
+    pub async fn get_connections(&self) -> Result<Vec<Connection>, XeroError> {
+        let access_token = self.token_manager.get_access_token().await?;
+        let response = self
+            .http_client
+            .get("https://api.xero.com/connections")
+            .bearer_auth(access_token)
+            .header("Accept", "application/json")
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json::<Vec<Connection>>().await?)
+        } else {
+            Err(XeroError::Api {
+                status: response.status(),
+                message: response.text().await?,
+            })
+        }
+    }
+
     /// Returns an API handle for the Accounting API endpoints.
     /// This handle requires the `tenant_id` to be passed for each call.
     pub fn accounting(&self) -> AccountingApi {
@@ -79,8 +109,14 @@ impl XeroClient {
     }
 
     /// Returns a convenient API handle for the Accounting API that is bound to a specific tenant.
-    pub fn accounting_for_tenant(&self, tenant_id: Uuid) -> TenantedAccountingApi {
-        TenantedAccountingApi::new(self.clone(), tenant_id)
+    /// An optional `TokenSet` can be provided to override the client's default token cache,
+    /// which is useful for background workers.
+    pub fn accounting_for_tenant(
+        &self,
+        tenant_id: Uuid,
+        token_override: Option<TokenSet>,
+    ) -> TenantedAccountingApi {
+        TenantedAccountingApi::new(self.clone(), tenant_id, token_override)
     }
 
     /// Returns a convenient API handle for the Assets API that is bound to a specific tenant.

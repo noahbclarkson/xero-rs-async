@@ -80,7 +80,7 @@ async fn get_associations() {
     let files_api = test_client.client.files_for_tenant(test_client.tenant_id);
     let accounting_api = test_client
         .client
-        .accounting_for_tenant(test_client.tenant_id);
+        .accounting_for_tenant(test_client.tenant_id, None);
 
     // We need an object ID to test with. Let's get an invoice.
     let invoices = accounting_api
