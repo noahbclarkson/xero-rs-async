@@ -1,7 +1,5 @@
 //! Handles OAuth 2.0 authentication flow and token management.
 
-//! Handles OAuth 2.0 authentication flow and token management.
-
 use crate::error::XeroError;
 use log::{debug, info, trace, warn};
 use reqwest::Client;
@@ -9,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::fs;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TokenSet {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -18,6 +16,15 @@ pub struct TokenSet {
     pub token_type: String,
     #[serde(default = "chrono::Utc::now")]
     pub obtained_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl TokenSet {
+    /// Checks if the access token is expired or will expire within the next 60 seconds.
+    pub fn is_expired(&self) -> bool {
+        let now = chrono::Utc::now();
+        (self.obtained_at + chrono::Duration::seconds(self.expires_in as i64))
+            < (now + chrono::Duration::seconds(60))
+    }
 }
 
 /// Manages OAuth 2.0 tokens, including fetching, caching, and refreshing.
@@ -88,7 +95,6 @@ impl TokenManager {
         } else {
             let status = response.status();
             let message = response.text().await?;
-            // ... unchanged error handling ...
             Err(XeroError::Auth(format!(
                 "Failed to exchange code: {} - {}",
                 status, message
@@ -124,7 +130,6 @@ impl TokenManager {
         } else {
             let status = response.status();
             let message = response.text().await?;
-            // ... unchanged error handling ...
             Err(XeroError::Auth(format!(
                 "Failed to refresh token: {} - {}",
                 status, message
@@ -140,10 +145,8 @@ impl TokenManager {
         })?;
         trace!("Loaded token set from cache.");
 
-        // Check if token is expired or close to expiring (e.g., within 60 seconds)
-        let now = chrono::Utc::now();
-        if (token_set.obtained_at + chrono::Duration::seconds(token_set.expires_in as i64))
-            < (now + chrono::Duration::seconds(60))
+        // Check if token is expired or close to expiring
+        if token_set.is_expired()
         {
             warn!("Access token expired or nearing expiry. Refreshing...");
             token_set = self.refresh_token(&token_set).await?;

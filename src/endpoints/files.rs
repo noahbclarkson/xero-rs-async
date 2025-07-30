@@ -1,5 +1,6 @@
 //! Entry point for interacting with the Xero Files API.
 
+use crate::auth::TokenSet;
 use crate::client::XeroClient;
 use crate::error::XeroError;
 use crate::models::files::{
@@ -11,6 +12,7 @@ use log::{error, trace};
 use reqwest::{multipart, Method};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::sync::Arc;
 use uuid::Uuid;
 
 const BASE_URL: &str = "https://api.xero.com/files.xro/1.0";
@@ -19,6 +21,7 @@ const BASE_URL: &str = "https://api.xero.com/files.xro/1.0";
 #[derive(Debug, Clone)]
 pub struct FilesApi {
     client: XeroClient,
+    token_override: Option<Arc<TokenSet>>,
 }
 
 /// Private helper methods for the Files API.
@@ -36,11 +39,17 @@ impl FilesApi {
         B: Serialize,
     {
         let url = format!("{}{}", BASE_URL, path);
+        let access_token = if let Some(token) = &self.token_override {
+            token.access_token.clone()
+        } else {
+            self.client.token_manager.get_access_token().await?
+        };
+
         let mut builder = self
             .client
             .http_client
             .request(method, &url)
-            .bearer_auth(self.client.token_manager.get_access_token().await?)
+            .bearer_auth(access_token)
             .header("xero-tenant-id", tenant_id.to_string())
             .header("Accept", "application/json");
 
@@ -82,11 +91,17 @@ impl FilesApi {
         B: Serialize,
     {
         let url = format!("{}{}", BASE_URL, path);
+        let access_token = if let Some(token) = &self.token_override {
+            token.access_token.clone()
+        } else {
+            self.client.token_manager.get_access_token().await?
+        };
+
         let mut builder = self
             .client
             .http_client
             .request(method, &url)
-            .bearer_auth(self.client.token_manager.get_access_token().await?)
+            .bearer_auth(access_token)
             .header("xero-tenant-id", tenant_id.to_string());
 
         if let Some(b) = body {
@@ -108,7 +123,15 @@ impl FilesApi {
 
 impl FilesApi {
     pub(crate) fn new(client: XeroClient) -> Self {
-        Self { client }
+        Self {
+            client,
+            token_override: None,
+        }
+    }
+
+    pub(crate) fn with_token_override(mut self, token: Arc<TokenSet>) -> Self {
+        self.token_override = Some(token);
+        self
     }
 
     // --- Files ---
@@ -155,11 +178,16 @@ impl FilesApi {
     ) -> Result<Vec<u8>, XeroError> {
         let path = format!("/Files/{}/Content", file_id);
         let url = format!("{}{}", BASE_URL, path);
+        let access_token = if let Some(token) = &self.token_override {
+            token.access_token.clone()
+        } else {
+            self.client.token_manager.get_access_token().await?
+        };
         let builder = self
             .client
             .http_client
             .get(&url)
-            .bearer_auth(self.client.token_manager.get_access_token().await?)
+            .bearer_auth(access_token)
             .header("xero-tenant-id", tenant_id.to_string());
 
         let _permit = self.client.rate_limiter.acquire_permit(tenant_id).await?;
@@ -185,11 +213,16 @@ impl FilesApi {
         let part = multipart::Part::bytes(body).file_name(file_name.clone());
         let form = multipart::Form::new().part("file", part);
 
+        let access_token = if let Some(token) = &self.token_override {
+            token.access_token.clone()
+        } else {
+            self.client.token_manager.get_access_token().await?
+        };
         let builder = self
             .client
             .http_client
             .post(&url)
-            .bearer_auth(self.client.token_manager.get_access_token().await?)
+            .bearer_auth(access_token)
             .header("xero-tenant-id", tenant_id.to_string())
             .header("Accept", "application/json")
             .multipart(form);

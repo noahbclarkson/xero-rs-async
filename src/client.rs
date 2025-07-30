@@ -1,6 +1,6 @@
 //! The main asynchronous Xero API client.
 
-use crate::auth::TokenManager;
+use crate::auth::{TokenManager, TokenSet};
 use crate::endpoints::{
     accounting::AccountingApi,
     assets::AssetsApi,
@@ -12,10 +12,20 @@ use crate::rate_limiter::RateLimiter;
 
 use log::{debug, info};
 use reqwest::Client;
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
-// Duplicate imports removed above. Only one import per item remains.
+
+/// Represents a Xero tenant connection.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Connection {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub tenant_type: String,
+    pub tenant_name: Option<String>,
+}
 
 /// The main client for interacting with all Xero APIs.
 #[derive(Debug, Clone)]
@@ -60,6 +70,26 @@ impl XeroClient {
         })
     }
 
+    /// Retrieves the list of tenants (organisations) connected to the current token.
+    pub async fn get_connections(&self) -> Result<Vec<Connection>, XeroError> {
+        let url = "https://api.xero.com/connections";
+        let response = self
+            .http_client
+            .get(url)
+            .bearer_auth(self.token_manager.get_access_token().await?)
+            .header("Accept", "application/json")
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json::<Vec<Connection>>().await?)
+        } else {
+            let status = response.status();
+            let message = response.text().await?;
+            Err(XeroError::Api { status, message })
+        }
+    }
+
     /// Returns an API handle for the Accounting API endpoints.
     /// This handle requires the `tenant_id` to be passed for each call.
     pub fn accounting(&self) -> AccountingApi {
@@ -91,5 +121,32 @@ impl XeroClient {
     /// Returns a convenient API handle for the Files API that is bound to a specific tenant.
     pub fn files_for_tenant(&self, tenant_id: Uuid) -> TenantedFilesApi {
         TenantedFilesApi::new(self.clone(), tenant_id)
+    }
+
+    /// Returns a convenient API handle for the Accounting API that is bound to a specific tenant and uses a specific token.
+    pub fn accounting_for_tenant_with_token(
+        &self,
+        tenant_id: Uuid,
+        token: TokenSet,
+    ) -> TenantedAccountingApi {
+        TenantedAccountingApi::with_token(self.clone(), tenant_id, token)
+    }
+
+    /// Returns a convenient API handle for the Assets API that is bound to a specific tenant and uses a specific token.
+    pub fn assets_for_tenant_with_token(
+        &self,
+        tenant_id: Uuid,
+        token: TokenSet,
+    ) -> TenantedAssetsApi {
+        TenantedAssetsApi::with_token(self.clone(), tenant_id, token)
+    }
+
+    /// Returns a convenient API handle for the Files API that is bound to a specific tenant and uses a specific token.
+    pub fn files_for_tenant_with_token(
+        &self,
+        tenant_id: Uuid,
+        token: TokenSet,
+    ) -> TenantedFilesApi {
+        TenantedFilesApi::with_token(self.clone(), tenant_id, token)
     }
 }

@@ -1,5 +1,6 @@
 //! Entry point for interacting with the Xero Assets API.
 
+use crate::auth::TokenSet;
 use crate::client::XeroClient;
 use crate::error::XeroError;
 use crate::models::assets::{
@@ -11,6 +12,7 @@ use log::{error, trace};
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::sync::Arc;
 use uuid::Uuid;
 
 const BASE_URL: &str = "https://api.xero.com/assets.xro/1.0";
@@ -19,6 +21,7 @@ const BASE_URL: &str = "https://api.xero.com/assets.xro/1.0";
 #[derive(Debug, Clone)]
 pub struct AssetsApi {
     client: XeroClient,
+    token_override: Option<Arc<TokenSet>>,
 }
 
 /// Private helper methods for the Assets API.
@@ -36,11 +39,17 @@ impl AssetsApi {
         B: Serialize,
     {
         let url = format!("{}{}", BASE_URL, path);
+        let access_token = if let Some(token) = &self.token_override {
+            token.access_token.clone()
+        } else {
+            self.client.token_manager.get_access_token().await?
+        };
+
         let mut builder = self
             .client
             .http_client
             .request(method, &url)
-            .bearer_auth(self.client.token_manager.get_access_token().await?)
+            .bearer_auth(access_token)
             .header("xero-tenant-id", tenant_id.to_string())
             .header("Accept", "application/json");
 
@@ -74,7 +83,15 @@ impl AssetsApi {
 
 impl AssetsApi {
     pub(crate) fn new(client: XeroClient) -> Self {
-        Self { client }
+        Self {
+            client,
+            token_override: None,
+        }
+    }
+
+    pub(crate) fn with_token_override(mut self, token: Arc<TokenSet>) -> Self {
+        self.token_override = Some(token);
+        self
     }
 
     /// Retrieves a list of asset types.

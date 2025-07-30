@@ -1,5 +1,6 @@
 //! Contains convenient API handles that are bound to a specific tenant ID.
 
+use crate::auth::TokenSet;
 use crate::client::XeroClient;
 use crate::error::XeroError;
 use crate::models::accounting::{
@@ -17,6 +18,7 @@ use crate::models::accounting::{
 use crate::models::assets::{asset, asset_type, settings};
 use crate::models::files::{association, file, folder};
 use chrono::{DateTime, Utc};
+use std::sync::Arc;
 use uuid::Uuid;
 
 // A macro to reduce boilerplate for the wrapper methods.
@@ -40,18 +42,29 @@ macro_rules! tenanted_wrapper {
         $vis struct $StructName {
             client: XeroClient,
             tenant_id: Uuid,
+            token_override: Option<Arc<TokenSet>>,
         }
 
         impl $StructName {
             pub(crate) fn new(client: XeroClient, tenant_id: Uuid) -> Self {
-                Self { client, tenant_id }
+                Self { client, tenant_id, token_override: None }
+            }
+
+            pub(crate) fn with_token(client: XeroClient, tenant_id: Uuid, token: TokenSet) -> Self {
+                Self { client, tenant_id, token_override: Some(Arc::new(token)) }
             }
 
             $(
                 $(#[$inner])*
                 #[allow(clippy::too_many_arguments)]
                 pub async fn $method_name(&self, $($param_name: $param_type),*) -> $return_type {
-                    self.client.$api_method().$method_name(self.tenant_id, $($param_name),*).await
+                    let api_handle = self.client.$api_method();
+                    let token_aware_handle = if let Some(token) = &self.token_override {
+                        api_handle.with_token_override(token.clone())
+                    } else {
+                        api_handle
+                    };
+                    token_aware_handle.$method_name(self.tenant_id, $($param_name),*).await
                 }
             )*
         }
