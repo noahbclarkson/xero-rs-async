@@ -38,7 +38,7 @@ impl AssetsApi {
         R: DeserializeOwned,
         B: Serialize,
     {
-        let url = format!("{}{}", BASE_URL, path);
+        let url = format!("{BASE_URL}{path}");
         let access_token = if let Some(token) = &self.token_override {
             token.access_token.clone()
         } else {
@@ -66,10 +66,9 @@ impl AssetsApi {
         if response.status().is_success() {
             let response_text = response.text().await?;
             serde_json::from_str::<R>(&response_text).map_err(|e| {
-                error!("Failed to deserialize JSON response from {}: {}", url, e);
+                error!("Failed to deserialize JSON response from {url}: {e}");
                 trace!(
-                    "Raw JSON response that failed to parse:\n---\n{}\n---",
-                    response_text
+                    "Raw JSON response that failed to parse:\n---\n{response_text}\n---"
                 );
                 XeroError::from(e)
             })
@@ -128,7 +127,7 @@ impl AssetsApi {
         sort_direction: Option<String>,
         filter_by: Option<String>,
     ) -> Result<Vec<Asset>, XeroError> {
-        let mut query = vec![("status".to_string(), format!("{:?}", status).to_uppercase())];
+        let mut query = vec![("status".to_string(), format!("{status:?}").to_uppercase())];
         if let Some(p) = page {
             query.push(("page".to_string(), p.to_string()));
         }
@@ -157,7 +156,7 @@ impl AssetsApi {
         tenant_id: Uuid,
         asset_id: Uuid,
     ) -> Result<Asset, XeroError> {
-        let path = format!("/Assets/{}", asset_id);
+        let path = format!("/Assets/{asset_id}");
         self.send_request(Method::GET, tenant_id, &path, None, None::<()>)
             .await
     }

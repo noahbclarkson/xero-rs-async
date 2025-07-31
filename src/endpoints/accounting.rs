@@ -43,10 +43,10 @@ impl AccountingApi {
         R: DeserializeOwned,
         B: Serialize,
     {
-        let url = format!("{}{}", BASE_URL, path);
-        debug!("Sending API request: {} {}", method, url);
+        let url = format!("{BASE_URL}{path}");
+        debug!("Sending API request: {method} {url}");
         if let Some(q) = &query {
-            trace!("Request query: {:?}", q);
+            trace!("Request query: {q:?}");
         }
         if body.is_some() {
             trace!("Request has a JSON body.");
@@ -74,14 +74,14 @@ impl AccountingApi {
         }
 
         let _permit = self.client.rate_limiter.acquire_permit(tenant_id).await?;
-        trace!("Rate limiter permit acquired for tenant {}", tenant_id);
+        trace!("Rate limiter permit acquired for tenant {tenant_id}");
         let response = builder.send().await?;
 
         if response.status().is_success() {
             trace!("API request successful with status: {}", response.status());
             let response_text = response.text().await?;
             serde_json::from_str::<R>(&response_text).map_err(|e| {
-                error!("Failed to deserialize JSON response from {}: {}", url, e);
+                error!("Failed to deserialize JSON response from {url}: {e}");
                 debug!(
                     "Raw JSON response that failed to parse:\n---\n{}\n---",
                     response_text.chars().take(10_000).collect::<String>()
@@ -92,8 +92,7 @@ impl AccountingApi {
             let status = response.status();
             let message = response.text().await?;
             error!(
-                "API request failed with status: {}. Message: {}",
-                status, message
+                "API request failed with status: {status}. Message: {message}"
             );
             Err(XeroError::Api { status, message })
         }
@@ -109,7 +108,7 @@ impl AccountingApi {
     where
         B: Serialize,
     {
-        let url = format!("{}{}", BASE_URL, path);
+        let url = format!("{BASE_URL}{path}");
         let access_token = if let Some(token) = &self.token_override {
             token.access_token.clone()
         } else {
@@ -150,7 +149,7 @@ impl AccountingApi {
     where
         B: Into<reqwest::Body>,
     {
-        let url = format!("{}{}", BASE_URL, path);
+        let url = format!("{BASE_URL}{path}");
         let access_token = if let Some(token) = &self.token_override {
             token.access_token.clone()
         } else {
@@ -176,8 +175,7 @@ impl AccountingApi {
                 .map(|r| r.attachments)
                 .map_err(|e| {
                     error!(
-                        "Failed to deserialize attachment response from {}: {}",
-                        url, e
+                        "Failed to deserialize attachment response from {url}: {e}"
                     );
                     debug!(
                         "Raw JSON response for attachment that failed to parse:\n---\n{}\n---",
@@ -217,7 +215,7 @@ impl AccountingApi {
         order_by: Option<String>,
     ) -> Result<Vec<account::Account>, XeroError> {
         let path = if let Some(id) = account_id {
-            format!("/Accounts/{}", id)
+            format!("/Accounts/{id}")
         } else {
             "/Accounts".to_string()
         };
@@ -259,7 +257,7 @@ impl AccountingApi {
         account_id: Uuid,
         account_data: account::Account,
     ) -> Result<Vec<account::Account>, XeroError> {
-        let path = format!("/Accounts/{}", account_id);
+        let path = format!("/Accounts/{account_id}");
         let resp: account::AccountsResponse = self
             .send_request(Method::POST, tenant_id, &path, None, Some(account_data))
             .await?;
@@ -268,7 +266,7 @@ impl AccountingApi {
 
     /// Deletes an account.
     pub async fn delete_account(&self, tenant_id: Uuid, account_id: Uuid) -> Result<(), XeroError> {
-        let path = format!("/Accounts/{}", account_id);
+        let path = format!("/Accounts/{account_id}");
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
     }
@@ -283,7 +281,7 @@ impl AccountingApi {
     ) -> Result<Vec<attachment::Attachment>, XeroError> {
         // Custom encoding as per API documentation note
         let encoded_file_name = file_name.replace('[', "%5B").replace(']', "%5D");
-        let path = format!("/Accounts/{}/Attachments/{}", account_id, encoded_file_name);
+        let path = format!("/Accounts/{account_id}/Attachments/{encoded_file_name}");
         let content_type = "application/octet-stream";
         self.send_request_raw_body(Method::PUT, tenant_id, &path, content_type, body)
             .await
@@ -303,7 +301,7 @@ impl AccountingApi {
         page_size: Option<u32>,
     ) -> Result<Vec<bank_transaction::BankTransaction>, XeroError> {
         let path = if let Some(id) = bank_transaction_id {
-            format!("/BankTransactions/{}", id)
+            format!("/BankTransactions/{id}")
         } else {
             "/BankTransactions".to_string()
         };
@@ -363,7 +361,7 @@ impl AccountingApi {
         bank_transaction_id: Uuid,
         transaction_data: bank_transaction::BankTransaction,
     ) -> Result<Vec<bank_transaction::BankTransaction>, XeroError> {
-        let path = format!("/BankTransactions/{}", bank_transaction_id);
+        let path = format!("/BankTransactions/{bank_transaction_id}");
         let resp: bank_transaction::BankTransactionsResponse = self
             .send_request(Method::POST, tenant_id, &path, None, Some(transaction_data))
             .await?;
@@ -381,7 +379,7 @@ impl AccountingApi {
         order_by: Option<String>,
     ) -> Result<Vec<bank_transfer::BankTransfer>, XeroError> {
         let path = if let Some(id) = bank_transfer_id {
-            format!("/BankTransfers/{}", id)
+            format!("/BankTransfers/{id}")
         } else {
             "/BankTransfers".to_string()
         };
@@ -429,7 +427,7 @@ impl AccountingApi {
         order_by: Option<String>,
     ) -> Result<Vec<batch_payment::BatchPayment>, XeroError> {
         let path = if let Some(id) = batch_payment_id {
-            format!("/BatchPayments/{}", id)
+            format!("/BatchPayments/{id}")
         } else {
             "/BatchPayments".to_string()
         };
@@ -475,7 +473,7 @@ impl AccountingApi {
         struct DeleteRequest {
             status: batch_payment::BatchPaymentStatus,
         }
-        let path = format!("/BatchPayments/{}", batch_payment_id);
+        let path = format!("/BatchPayments/{batch_payment_id}");
         let body = DeleteRequest {
             status: batch_payment::BatchPaymentStatus::Deleted,
         };
@@ -493,7 +491,7 @@ impl AccountingApi {
         branding_theme_id: Option<Uuid>,
     ) -> Result<Vec<branding_theme::BrandingTheme>, XeroError> {
         let path = if let Some(id) = branding_theme_id {
-            format!("/BrandingThemes/{}", id)
+            format!("/BrandingThemes/{id}")
         } else {
             "/BrandingThemes".to_string()
         };
@@ -509,7 +507,7 @@ impl AccountingApi {
         tenant_id: Uuid,
         branding_theme_id: Uuid,
     ) -> Result<Vec<payment_service::PaymentService>, XeroError> {
-        let path = format!("/BrandingThemes/{}/PaymentServices", branding_theme_id);
+        let path = format!("/BrandingThemes/{branding_theme_id}/PaymentServices");
         let resp: payment_service::PaymentServicesResponse = self
             .send_request(Method::GET, tenant_id, &path, None, None::<()>)
             .await?;
@@ -533,7 +531,7 @@ impl AccountingApi {
             #[serde(rename = "PaymentServices")]
             services: Vec<RequestBody>,
         }
-        let path = format!("/BrandingThemes/{}/PaymentServices", branding_theme_id);
+        let path = format!("/BrandingThemes/{branding_theme_id}/PaymentServices");
         let body = RequestWrapper {
             services: vec![RequestBody {
                 id: payment_service_id,
@@ -555,7 +553,7 @@ impl AccountingApi {
         date_from: Option<String>,
     ) -> Result<Vec<budget::Budget>, XeroError> {
         let path = if let Some(id) = budget_id {
-            format!("/Budgets/{}", id)
+            format!("/Budgets/{id}")
         } else {
             "/Budgets".to_string()
         };
@@ -590,7 +588,7 @@ impl AccountingApi {
         search_term: Option<String>,
     ) -> Result<Vec<contact::Contact>, XeroError> {
         let path = if let Some(id) = contact_id {
-            format!("/Contacts/{}", id)
+            format!("/Contacts/{id}")
         } else {
             "/Contacts".to_string()
         };
@@ -655,7 +653,7 @@ impl AccountingApi {
         contact_id: Uuid,
         contact_data: contact::Contact,
     ) -> Result<Vec<contact::Contact>, XeroError> {
-        let path = format!("/Contacts/{}", contact_id);
+        let path = format!("/Contacts/{contact_id}");
         let resp: contact::ContactsResponse = self
             .send_request(Method::POST, tenant_id, &path, None, Some(contact_data))
             .await?;
@@ -668,7 +666,7 @@ impl AccountingApi {
         tenant_id: Uuid,
         contact_id: Uuid,
     ) -> Result<Vec<CISSettings>, XeroError> {
-        let path = format!("/Contacts/{}/CISSettings", contact_id);
+        let path = format!("/Contacts/{contact_id}/CISSettings");
         let resp: CISSettingsResponse = self
             .send_request(Method::GET, tenant_id, &path, None, None::<()>)
             .await?;
@@ -685,7 +683,7 @@ impl AccountingApi {
         order_by: Option<String>,
     ) -> Result<Vec<contact_group::ContactGroup>, XeroError> {
         let path = if let Some(id) = contact_group_id {
-            format!("/ContactGroups/{}", id)
+            format!("/ContactGroups/{id}")
         } else {
             "/ContactGroups".to_string()
         };
@@ -727,7 +725,7 @@ impl AccountingApi {
         contact_group_id: Uuid,
         contact_group_data: contact_group::ContactGroup,
     ) -> Result<Vec<contact_group::ContactGroup>, XeroError> {
-        let path = format!("/ContactGroups/{}", contact_group_id);
+        let path = format!("/ContactGroups/{contact_group_id}");
         let resp: contact_group::ContactGroupsResponse = self
             .send_request(
                 Method::POST,
@@ -747,7 +745,7 @@ impl AccountingApi {
         contact_group_id: Uuid,
         contacts: Vec<contact::Contact>,
     ) -> Result<Vec<contact::Contact>, XeroError> {
-        let path = format!("/ContactGroups/{}/Contacts", contact_group_id);
+        let path = format!("/ContactGroups/{contact_group_id}/Contacts");
         let body = contact::ContactsRequest { contacts };
         let resp: contact::ContactsResponse = self
             .send_request(Method::PUT, tenant_id, &path, None, Some(body))
@@ -763,8 +761,7 @@ impl AccountingApi {
         contact_id: Uuid,
     ) -> Result<(), XeroError> {
         let path = format!(
-            "/ContactGroups/{}/Contacts/{}",
-            contact_group_id, contact_id
+            "/ContactGroups/{contact_group_id}/Contacts/{contact_id}"
         );
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
@@ -776,7 +773,7 @@ impl AccountingApi {
         tenant_id: Uuid,
         contact_group_id: Uuid,
     ) -> Result<(), XeroError> {
-        let path = format!("/ContactGroups/{}/Contacts", contact_group_id);
+        let path = format!("/ContactGroups/{contact_group_id}/Contacts");
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
     }
@@ -795,7 +792,7 @@ impl AccountingApi {
         page_size: Option<u32>,
     ) -> Result<Vec<credit_note::CreditNote>, XeroError> {
         let path = if let Some(id) = credit_note_id {
-            format!("/CreditNotes/{}", id)
+            format!("/CreditNotes/{id}")
         } else {
             "/CreditNotes".to_string()
         };
@@ -853,7 +850,7 @@ impl AccountingApi {
         credit_note_id: Uuid,
         credit_note_data: credit_note::CreditNote,
     ) -> Result<Vec<credit_note::CreditNote>, XeroError> {
-        let path = format!("/CreditNotes/{}", credit_note_id);
+        let path = format!("/CreditNotes/{credit_note_id}");
         let resp: credit_note::CreditNotesResponse = self
             .send_request(Method::POST, tenant_id, &path, None, Some(credit_note_data))
             .await?;
@@ -867,7 +864,7 @@ impl AccountingApi {
         credit_note_id: Uuid,
         allocation: Allocation,
     ) -> Result<Vec<Allocation>, XeroError> {
-        let path = format!("/CreditNotes/{}/Allocations", credit_note_id);
+        let path = format!("/CreditNotes/{credit_note_id}/Allocations");
         let resp: credit_note::AllocationsResponse = self
             .send_request(Method::PUT, tenant_id, &path, None, Some(allocation))
             .await?;
@@ -882,8 +879,7 @@ impl AccountingApi {
         allocation_id: Uuid,
     ) -> Result<(), XeroError> {
         let path = format!(
-            "/CreditNotes/{}/Allocations/{}",
-            credit_note_id, allocation_id
+            "/CreditNotes/{credit_note_id}/Allocations/{allocation_id}"
         );
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
@@ -939,7 +935,7 @@ impl AccountingApi {
         order_by: Option<String>,
     ) -> Result<Vec<employee::Employee>, XeroError> {
         let path = if let Some(id) = employee_id {
-            format!("/Employees/{}", id)
+            format!("/Employees/{id}")
         } else {
             "/Employees".to_string()
         };
@@ -980,7 +976,7 @@ impl AccountingApi {
         employee_id: Uuid,
         employee_data: employee::Employee,
     ) -> Result<Vec<employee::Employee>, XeroError> {
-        let path = format!("/Employees/{}", employee_id);
+        let path = format!("/Employees/{employee_id}");
         let resp: employee::EmployeesResponse = self
             .send_request(Method::POST, tenant_id, &path, None, Some(employee_data))
             .await?;
@@ -998,7 +994,7 @@ impl AccountingApi {
         order_by: Option<String>,
     ) -> Result<Vec<expense_claim::ExpenseClaim>, XeroError> {
         let path = if let Some(id) = expense_claim_id {
-            format!("/ExpenseClaims/{}", id)
+            format!("/ExpenseClaims/{id}")
         } else {
             "/ExpenseClaims".to_string()
         };
@@ -1053,7 +1049,7 @@ impl AccountingApi {
         endpoint: &str,
         guid: Uuid,
     ) -> Result<Vec<history::HistoryRecord>, XeroError> {
-        let path = format!("/{}/{}/history", endpoint, guid);
+        let path = format!("/{endpoint}/{guid}/history");
         let resp: history::HistoryRecordsResponse = self
             .send_request(Method::GET, tenant_id, &path, None, None::<()>)
             .await?;
@@ -1079,7 +1075,7 @@ impl AccountingApi {
             history_records: Vec<HistoryNote>,
         }
 
-        let path = format!("/{}/{}/history", endpoint, guid);
+        let path = format!("/{endpoint}/{guid}/history");
         let body = HistoryNoteRequest {
             history_records: vec![HistoryNote { details }],
         };
@@ -1108,7 +1104,7 @@ impl AccountingApi {
         search_term: Option<String>,
     ) -> Result<Vec<invoice::Invoice>, XeroError> {
         let path = if let Some(id) = invoice_id {
-            format!("/Invoices/{}", id)
+            format!("/Invoices/{id}")
         } else {
             "/Invoices".to_string()
         };
@@ -1188,7 +1184,7 @@ impl AccountingApi {
         invoice_id: Uuid,
         invoice_data: invoice::Invoice,
     ) -> Result<Vec<invoice::Invoice>, XeroError> {
-        let path = format!("/Invoices/{}", invoice_id);
+        let path = format!("/Invoices/{invoice_id}");
         let resp: invoice::InvoicesResponse = self
             .send_request(Method::POST, tenant_id, &path, None, Some(invoice_data))
             .await?;
@@ -1201,7 +1197,7 @@ impl AccountingApi {
         tenant_id: Uuid,
         invoice_id: Uuid,
     ) -> Result<invoice::OnlineInvoice, XeroError> {
-        let path = format!("/Invoices/{}/OnlineInvoice", invoice_id);
+        let path = format!("/Invoices/{invoice_id}/OnlineInvoice");
         let mut resp: invoice::OnlineInvoicesResponse = self
             .send_request(Method::GET, tenant_id, &path, None, None::<()>)
             .await?;
@@ -1213,7 +1209,7 @@ impl AccountingApi {
 
     /// Emails a sales invoice from Xero.
     pub async fn email_invoice(&self, tenant_id: Uuid, invoice_id: Uuid) -> Result<(), XeroError> {
-        let path = format!("/Invoices/{}/Email", invoice_id);
+        let path = format!("/Invoices/{invoice_id}/Email");
         self.send_request_empty_response(Method::POST, tenant_id, &path, None::<()>)
             .await
     }
@@ -1229,7 +1225,7 @@ impl AccountingApi {
         order_by: Option<String>,
     ) -> Result<Vec<item::Item>, XeroError> {
         let path = if let Some(id) = item_id {
-            format!("/Items/{}", id)
+            format!("/Items/{id}")
         } else {
             "/Items".to_string()
         };
@@ -1271,7 +1267,7 @@ impl AccountingApi {
         item_id: Uuid,
         item_data: item::Item,
     ) -> Result<Vec<item::Item>, XeroError> {
-        let path = format!("/Items/{}", item_id);
+        let path = format!("/Items/{item_id}");
         let resp: item::ItemsResponse = self
             .send_request(Method::POST, tenant_id, &path, None, Some(item_data))
             .await?;
@@ -1280,7 +1276,7 @@ impl AccountingApi {
 
     /// Deletes an item.
     pub async fn delete_item(&self, tenant_id: Uuid, item_id: Uuid) -> Result<(), XeroError> {
-        let path = format!("/Items/{}", item_id);
+        let path = format!("/Items/{item_id}");
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
     }
@@ -1326,7 +1322,7 @@ impl AccountingApi {
         page: Option<u32>,
     ) -> Result<Vec<linked_transaction::LinkedTransaction>, XeroError> {
         let path = if let Some(id) = linked_transaction_id {
-            format!("/LinkedTransactions/{}", id)
+            format!("/LinkedTransactions/{id}")
         } else {
             "/LinkedTransactions".to_string()
         };
@@ -1359,7 +1355,7 @@ impl AccountingApi {
         transaction: linked_transaction::LinkedTransaction,
     ) -> Result<Vec<linked_transaction::LinkedTransaction>, XeroError> {
         let path = if let Some(id) = transaction.linked_transaction_id {
-            format!("/LinkedTransactions/{}", id)
+            format!("/LinkedTransactions/{id}")
         } else {
             "/LinkedTransactions".to_string()
         };
@@ -1375,7 +1371,7 @@ impl AccountingApi {
         tenant_id: Uuid,
         linked_transaction_id: Uuid,
     ) -> Result<(), XeroError> {
-        let path = format!("/LinkedTransactions/{}", linked_transaction_id);
+        let path = format!("/LinkedTransactions/{linked_transaction_id}");
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
     }
@@ -1394,7 +1390,7 @@ impl AccountingApi {
         page_size: Option<u32>,
     ) -> Result<Vec<manual_journal::ManualJournal>, XeroError> {
         let path = if let Some(id) = manual_journal_id {
-            format!("/ManualJournals/{}", id)
+            format!("/ManualJournals/{id}")
         } else {
             "/ManualJournals".to_string()
         };
@@ -1424,7 +1420,7 @@ impl AccountingApi {
         journal: manual_journal::ManualJournal,
     ) -> Result<Vec<manual_journal::ManualJournal>, XeroError> {
         let path = if let Some(id) = journal.manual_journal_id {
-            format!("/ManualJournals/{}", id)
+            format!("/ManualJournals/{id}")
         } else {
             "/ManualJournals".to_string()
         };
@@ -1490,7 +1486,7 @@ impl AccountingApi {
         page: Option<u32>,
     ) -> Result<Vec<overpayment::Overpayment>, XeroError> {
         let path = if let Some(id) = overpayment_id {
-            format!("/Overpayments/{}", id)
+            format!("/Overpayments/{id}")
         } else {
             "/Overpayments".to_string()
         };
@@ -1517,7 +1513,7 @@ impl AccountingApi {
         overpayment_id: Uuid,
         allocation: Allocation,
     ) -> Result<Vec<Allocation>, XeroError> {
-        let path = format!("/Overpayments/{}/Allocations", overpayment_id);
+        let path = format!("/Overpayments/{overpayment_id}/Allocations");
         let resp: credit_note::AllocationsResponse = self
             .send_request(Method::PUT, tenant_id, &path, None, Some(allocation))
             .await?;
@@ -1532,8 +1528,7 @@ impl AccountingApi {
         allocation_id: Uuid,
     ) -> Result<(), XeroError> {
         let path = format!(
-            "/Overpayments/{}/Allocations/{}",
-            overpayment_id, allocation_id
+            "/Overpayments/{overpayment_id}/Allocations/{allocation_id}"
         );
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
@@ -1553,7 +1548,7 @@ impl AccountingApi {
         page_size: Option<u32>,
     ) -> Result<Vec<payment::Payment>, XeroError> {
         let path = if let Some(id) = payment_id {
-            format!("/Payments/{}", id)
+            format!("/Payments/{id}")
         } else {
             "/Payments".to_string()
         };
@@ -1615,7 +1610,7 @@ impl AccountingApi {
         struct DeleteRequest {
             status: payment::PaymentStatus,
         }
-        let path = format!("/Payments/{}", payment_id);
+        let path = format!("/Payments/{payment_id}");
         let body = DeleteRequest {
             status: payment::PaymentStatus::Deleted,
         };
@@ -1667,7 +1662,7 @@ impl AccountingApi {
         page: Option<u32>,
     ) -> Result<Vec<prepayment::Prepayment>, XeroError> {
         let path = if let Some(id) = prepayment_id {
-            format!("/Prepayments/{}", id)
+            format!("/Prepayments/{id}")
         } else {
             "/Prepayments".to_string()
         };
@@ -1694,7 +1689,7 @@ impl AccountingApi {
         prepayment_id: Uuid,
         allocation: Allocation,
     ) -> Result<Vec<Allocation>, XeroError> {
-        let path = format!("/Prepayments/{}/Allocations", prepayment_id);
+        let path = format!("/Prepayments/{prepayment_id}/Allocations");
         let resp: credit_note::AllocationsResponse = self
             .send_request(Method::PUT, tenant_id, &path, None, Some(allocation))
             .await?;
@@ -1709,8 +1704,7 @@ impl AccountingApi {
         allocation_id: Uuid,
     ) -> Result<(), XeroError> {
         let path = format!(
-            "/Prepayments/{}/Allocations/{}",
-            prepayment_id, allocation_id
+            "/Prepayments/{prepayment_id}/Allocations/{allocation_id}"
         );
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
@@ -1731,7 +1725,7 @@ impl AccountingApi {
         page_size: Option<u32>,
     ) -> Result<Vec<purchase_order::PurchaseOrder>, XeroError> {
         let path = if let Some(id) = purchase_order_id {
-            format!("/PurchaseOrders/{}", id)
+            format!("/PurchaseOrders/{id}")
         } else {
             "/PurchaseOrders".to_string()
         };
@@ -1807,7 +1801,7 @@ impl AccountingApi {
         page_size: Option<u32>,
     ) -> Result<Vec<quote::Quote>, XeroError> {
         let path = if let Some(id) = quote_id {
-            format!("/Quotes/{}", id)
+            format!("/Quotes/{id}")
         } else {
             "/Quotes".to_string()
         };
@@ -1876,7 +1870,7 @@ impl AccountingApi {
         order_by: Option<String>,
     ) -> Result<Vec<receipt::Receipt>, XeroError> {
         let path = if let Some(id) = receipt_id {
-            format!("/Receipts/{}", id)
+            format!("/Receipts/{id}")
         } else {
             "/Receipts".to_string()
         };
@@ -1931,7 +1925,7 @@ impl AccountingApi {
         order_by: Option<String>,
     ) -> Result<Vec<repeating_invoice::RepeatingInvoice>, XeroError> {
         let path = if let Some(id) = repeating_invoice_id {
-            format!("/RepeatingInvoices/{}", id)
+            format!("/RepeatingInvoices/{id}")
         } else {
             "/RepeatingInvoices".to_string()
         };
@@ -1981,7 +1975,7 @@ impl AccountingApi {
         report_name: &str,
         params: Vec<(&str, &str)>,
     ) -> Result<report::Report, XeroError> {
-        let path = format!("/Reports/{}", report_name);
+        let path = format!("/Reports/{report_name}");
         let query: Vec<(String, String)> = params
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -2048,7 +2042,7 @@ impl AccountingApi {
         include_archived: Option<bool>,
     ) -> Result<Vec<tracking_category::TrackingCategory>, XeroError> {
         let path = if let Some(id) = tracking_category_id {
-            format!("/TrackingCategories/{}", id)
+            format!("/TrackingCategories/{id}")
         } else {
             "/TrackingCategories".to_string()
         };
@@ -2098,7 +2092,7 @@ impl AccountingApi {
             #[serde(rename = "Name")]
             name: String,
         }
-        let path = format!("/TrackingCategories/{}", category_id);
+        let path = format!("/TrackingCategories/{category_id}");
         let body = UpdateRequest { name };
         let resp: tracking_category::TrackingCategoriesResponse = self
             .send_request(Method::POST, tenant_id, &path, None, Some(body))
@@ -2112,7 +2106,7 @@ impl AccountingApi {
         tenant_id: Uuid,
         category_id: Uuid,
     ) -> Result<(), XeroError> {
-        let path = format!("/TrackingCategories/{}", category_id);
+        let path = format!("/TrackingCategories/{category_id}");
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
     }
@@ -2124,7 +2118,7 @@ impl AccountingApi {
         category_id: Uuid,
         option: tracking_category::TrackingOption,
     ) -> Result<Vec<tracking_category::TrackingOption>, XeroError> {
-        let path = format!("/TrackingCategories/{}/Options", category_id);
+        let path = format!("/TrackingCategories/{category_id}/Options");
         let resp: tracking_category::TrackingOptionsResponse = self
             .send_request(Method::PUT, tenant_id, &path, None, Some(option))
             .await?;
@@ -2144,7 +2138,7 @@ impl AccountingApi {
             #[serde(rename = "Name")]
             name: String,
         }
-        let path = format!("/TrackingCategories/{}/Options/{}", category_id, option_id);
+        let path = format!("/TrackingCategories/{category_id}/Options/{option_id}");
         let body = UpdateRequest { name };
         let resp: tracking_category::TrackingOptionsResponse = self
             .send_request(Method::POST, tenant_id, &path, None, Some(body))
@@ -2159,7 +2153,7 @@ impl AccountingApi {
         category_id: Uuid,
         option_id: Uuid,
     ) -> Result<(), XeroError> {
-        let path = format!("/TrackingCategories/{}/Options/{}", category_id, option_id);
+        let path = format!("/TrackingCategories/{category_id}/Options/{option_id}");
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
     }
@@ -2175,7 +2169,7 @@ impl AccountingApi {
         order_by: Option<String>,
     ) -> Result<Vec<user::User>, XeroError> {
         let path = if let Some(id) = user_id {
-            format!("/Users/{}", id)
+            format!("/Users/{id}")
         } else {
             "/Users".to_string()
         };

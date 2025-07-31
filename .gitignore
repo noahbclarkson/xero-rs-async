@@ -16,3 +16,6 @@ xero_rate_limit_history.json
 
 # OS-specific
 .DS_Store
+
+# Local /.claude
+/.claude/

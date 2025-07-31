@@ -117,7 +117,7 @@ async fn get_associations() {
         let count_map = count_result.expect("Failed to get association count");
         let count = count_map.get(&object_id).unwrap_or(&0);
         assert_eq!(*count as usize, object_associations.len());
-        println!("Association count for invoice {} is {}.", object_id, count);
+        println!("Association count for invoice {object_id} is {count}.");
 
         // If there's an association, test getting it by file ID
         if let Some(association) = object_associations.first() {

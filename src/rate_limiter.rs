@@ -40,7 +40,7 @@ pub struct RateLimiter {
 impl RateLimiter {
     /// Creates a new RateLimiter, loading previous state from a cache file if it exists.
     pub async fn new(cache_path: PathBuf) -> Result<Self, XeroError> {
-        debug!("Initializing RateLimiter from cache: {:?}", cache_path);
+        debug!("Initializing RateLimiter from cache: {cache_path:?}");
         let tenant_states: DashMap<Uuid, Arc<Mutex<TenantRateLimitState>>> =
             if fs::try_exists(&cache_path).await? {
                 let data = fs::read_to_string(&cache_path).await?;
@@ -68,9 +68,9 @@ impl RateLimiter {
         &self,
         tenant_id: Uuid,
     ) -> Result<tokio::sync::SemaphorePermit<'_>, XeroError> {
-        trace!("Attempting to acquire permit for tenant {}", tenant_id);
+        trace!("Attempting to acquire permit for tenant {tenant_id}");
         let permit = self.concurrent_semaphore.acquire().await.unwrap();
-        debug!("Acquired concurrency permit for tenant {}", tenant_id);
+        debug!("Acquired concurrency permit for tenant {tenant_id}");
 
         let tenant_state_lock = self.tenant_states.entry(tenant_id).or_default().clone();
 
@@ -89,8 +89,7 @@ impl RateLimiter {
 
             if requests_in_last_day >= DAILY_LIMIT - RATE_LIMIT_BUFFER {
                 return Err(XeroError::RateLimiter(format!(
-                    "Daily rate limit for tenant {} is nearly exhausted.",
-                    tenant_id
+                    "Daily rate limit for tenant {tenant_id} is nearly exhausted."
                 )));
             }
 
@@ -98,8 +97,7 @@ impl RateLimiter {
                 if let Some(oldest_in_minute) = state.requests.iter().find(|&&t| t > minute_ago) {
                     let wait_seconds = (oldest_in_minute + 61 - now).max(1);
                     warn!(
-                        "Minute rate limit approaching for tenant {}. Waiting for {} seconds.",
-                        tenant_id, wait_seconds
+                        "Minute rate limit approaching for tenant {tenant_id}. Waiting for {wait_seconds} seconds."
                     );
                     sleep(Duration::from_secs(wait_seconds as u64)).await;
                     continue;
@@ -108,7 +106,7 @@ impl RateLimiter {
             break;
         }
 
-        trace!("Permit granted. Recording request for tenant {}", tenant_id);
+        trace!("Permit granted. Recording request for tenant {tenant_id}");
         state.requests.push_back(now);
 
         // Drop the lock on the individual tenant's state before saving the whole map

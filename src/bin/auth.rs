@@ -61,23 +61,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n✅ Step 1: Your browser will now open for Xero authorization.");
     println!(
-        "If it doesn't, please manually visit this URL:\n\n{}\n",
-        auth_url
+        "If it doesn't, please manually visit this URL:\n\n{auth_url}\n"
     );
     webbrowser::open(&auth_url).expect("Failed to open web browser.");
 
     // 4. Start a local server to listen for the callback
     let server_addr = "localhost:80";
-    let server = Server::http(server_addr).unwrap_or_else(|_| panic!("Failed to start server on {}. Make sure no other services (like a web server) are using port 80 and that you have administrator privileges to run this command.",
-        server_addr));
+    let server = Server::http(server_addr).unwrap_or_else(|_| panic!("Failed to start server on {server_addr}. Make sure no other services (like a web server) are using port 80 and that you have administrator privileges to run this command."));
     println!(
-        "✅ Step 2: Waiting for authorization callback on {} ...",
-        redirect_uri_str
+        "✅ Step 2: Waiting for authorization callback on {redirect_uri_str} ..."
     );
     println!("Note: If you get an error page from Xero, please check that:");
     println!(
-        "  - The redirect URI in your Xero app configuration exactly matches: {}",
-        redirect_uri_str
+        "  - The redirect URI in your Xero app configuration exactly matches: {redirect_uri_str}"
     );
     println!("  - All the scopes requested are enabled for your Xero app");
     println!("  - Your Xero app is set to 'Web App' type (not Public/Mobile)");
@@ -158,7 +154,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             fetch_and_display_connections(&xero_client).await?;
         }
         Err(e) => {
-            eprintln!("\n❌ Error exchanging code for tokens: {}", e);
+            eprintln!("\n❌ Error exchanging code for tokens: {e}");
         }
     }
 

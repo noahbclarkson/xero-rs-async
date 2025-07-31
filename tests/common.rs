@@ -66,7 +66,7 @@ pub async fn get_test_client() -> TestClient {
     .await
     .expect("Failed to create XeroClient");
 
-    info!("✅ Test client initialized for tenant: {}", tenant_id);
+    info!("✅ Test client initialized for tenant: {tenant_id}");
 
     TestClient { client, tenant_id }
 }

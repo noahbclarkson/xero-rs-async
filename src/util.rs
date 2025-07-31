@@ -15,7 +15,7 @@ fn parse_xero_date(s: &str) -> Result<DateTime<Utc>, String> {
     let ts_str = &s[..end_of_timestamp];
     let ts = ts_str
         .parse::<i64>()
-        .map_err(|e| format!("Invalid timestamp: {}", e))?;
+        .map_err(|e| format!("Invalid timestamp: {e}"))?;
 
     DateTime::from_timestamp_millis(ts).ok_or_else(|| "Invalid timestamp value".to_string())
 }
