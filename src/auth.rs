@@ -88,8 +88,8 @@ impl TokenManager {
 
         if response.status().is_success() {
             let token_set = response.json::<TokenSet>().await?;
-            info!("Successfully exchanged code for token set. Saving to cache.");
-            self.save_token(&token_set).await?;
+            info!("Successfully exchanged code for token set. Saving to in-memory cache.");
+            self.save_token(&token_set).await;
             Ok(token_set)
         } else {
             let status = response.status();
@@ -123,8 +123,8 @@ impl TokenManager {
 
         if response.status().is_success() {
             let new_token_set = response.json::<TokenSet>().await?;
-            info!("Successfully refreshed token set. Saving to cache.");
-            self.save_token(&new_token_set).await?;
+            info!("Successfully refreshed token set. Saving to in-memory cache.");
+            self.save_token(&new_token_set).await;
             Ok(new_token_set)
         } else {
             let status = response.status();
@@ -139,10 +139,10 @@ impl TokenManager {
     /// Retrieves the current valid access token, refreshing it if necessary.
     pub async fn get_access_token(&self) -> Result<String, XeroError> {
         debug!("Getting access token.");
-        let mut token_set = self.load_token().await?.ok_or_else(|| {
+        let mut token_set = self.load_token().await.ok_or_else(|| {
             XeroError::Auth("Not authenticated. Please authorize first.".to_string())
         })?;
-        trace!("Loaded token set from cache.");
+        trace!("Loaded token set from in-memory cache.");
 
         // Check if token is expired or close to expiring
         if token_set.is_expired()
@@ -156,25 +156,34 @@ impl TokenManager {
         Ok(token_set.access_token)
     }
 
-    /// Saves the token set to the cache file.
-    async fn save_token(&self, token_set: &TokenSet) -> Result<(), XeroError> {
-        trace!("Saving token to cache at {:?}", self.cache_path);
-        let data = serde_json::to_string(token_set)?;
-        fs::write(&self.cache_path, data).await?;
-        debug!("Token saved successfully.");
-        Ok(())
+    /// Saves the token set to the in-memory cache.
+    async fn save_token(&self, token_set: &TokenSet) {
+        trace!("Saving token to in-memory cache");
+        let mut cached_token = self.cached_token.lock().await;
+        *cached_token = Some(token_set.clone());
+        debug!("Token saved successfully to in-memory cache.");
     }
 
-    /// Loads the token set from the cache file.
-    async fn load_token(&self) -> Result<Option<TokenSet>, XeroError> {
-        trace!("Loading token from cache at {:?}", self.cache_path);
-        if fs::try_exists(&self.cache_path).await? {
-            let data = fs::read_to_string(&self.cache_path).await?;
-            debug!("Token cache file found and read.");
-            Ok(serde_json::from_str(&data).ok())
+    /// Loads the token set from the in-memory cache.
+    async fn load_token(&self) -> Option<TokenSet> {
+        trace!("Loading token from in-memory cache");
+        let cached_token = self.cached_token.lock().await;
+        if let Some(token) = cached_token.as_ref() {
+            debug!("Token found in in-memory cache.");
+            Some(token.clone())
         } else {
-            warn!("Token cache file not found.");
-            Ok(None)
+            warn!("No token found in in-memory cache.");
+            None
         }
+    }
+
+    /// Sets a token directly in the in-memory cache (useful for external token management).
+    pub async fn set_token(&self, token_set: &TokenSet) {
+        self.save_token(token_set).await;
+    }
+
+    /// Gets the current token from in-memory cache without refreshing.
+    pub async fn get_cached_token(&self) -> Option<TokenSet> {
+        self.load_token().await
     }
 }
