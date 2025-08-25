@@ -2,7 +2,6 @@
 
 use log::info;
 use std::env;
-use std::path::PathBuf;
 use std::sync::{Arc, Once};
 use tokio::sync::OnceCell;
 use uuid::Uuid;
@@ -33,14 +32,11 @@ pub async fn get_test_client() -> TestClient {
 
     dotenvy::dotenv().expect("Failed to load .env file. Make sure it exists at the project root.");
 
-    let rate_limit_cache_path =
-        env::var("RATE_LIMIT_CACHE_PATH").expect("RATE_LIMIT_CACHE_PATH must be set.");
-
     // Get or initialize the single, shared RateLimiter instance.
     let rate_limiter = RATE_LIMITER
         .get_or_init(|| async {
             Arc::new(
-                RateLimiter::new(PathBuf::from(rate_limit_cache_path))
+                RateLimiter::new()
                     .await
                     .expect("Failed to create shared RateLimiter"),
             )
@@ -52,7 +48,6 @@ pub async fn get_test_client() -> TestClient {
     let client_secret = env::var("XERO_CLIENT_SECRET").expect("XERO_CLIENT_SECRET must be set.");
     let redirect_uri = env::var("XERO_REDIRECT_URI").expect("XERO_REDIRECT_URI must be set.");
     let tenant_id_str = env::var("XERO_TENANT_ID").expect("XERO_TENANT_ID must be set.");
-    let token_cache_path = env::var("TOKEN_CACHE_PATH").expect("TOKEN_CACHE_PATH must be set.");
 
     let tenant_id = Uuid::parse_str(&tenant_id_str).expect("XERO_TENANT_ID is not a valid UUID.");
 
@@ -60,7 +55,6 @@ pub async fn get_test_client() -> TestClient {
         client_id,
         client_secret,
         redirect_uri,
-        PathBuf::from(token_cache_path),
         rate_limiter, // Inject the shared limiter
     )
     .await

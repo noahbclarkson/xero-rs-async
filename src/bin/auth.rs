@@ -1,7 +1,6 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
-use std::path::PathBuf;
 use std::sync::Mutex;
 use tiny_http::{Response, Server};
 use url::Url;
@@ -19,20 +18,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client_id = env::var("XERO_CLIENT_ID").expect("XERO_CLIENT_ID must be set.");
     let client_secret = env::var("XERO_CLIENT_SECRET").expect("XERO_CLIENT_SECRET must be set.");
     let redirect_uri_str = env::var("XERO_REDIRECT_URI").expect("XERO_REDIRECT_URI must be set.");
-    let token_cache_path = env::var("TOKEN_CACHE_PATH").expect("TOKEN_CACHE_PATH must be set.");
-    let rate_limit_cache_path =
-        env::var("RATE_LIMIT_CACHE_PATH").expect("RATE_LIMIT_CACHE_PATH must be set.");
 
     // 2. Initialize the RateLimiter and Xero Client
     use std::sync::Arc;
     use xero_rs_async::rate_limiter::RateLimiter;
 
-    let rate_limiter = Arc::new(RateLimiter::new(PathBuf::from(rate_limit_cache_path)).await?);
+    let rate_limiter = Arc::new(RateLimiter::new().await?);
     let xero_client = XeroClient::new(
         client_id.clone(),
         client_secret,
         redirect_uri_str.clone(),
-        PathBuf::from(token_cache_path),
         rate_limiter,
     )
     .await?;
