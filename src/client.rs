@@ -13,7 +13,6 @@ use crate::rate_limiter::RateLimiter;
 use log::{debug, info};
 use reqwest::Client;
 use serde::Deserialize;
-use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -43,13 +42,11 @@ impl XeroClient {
     /// * `client_id` - Your Xero App's client ID.
     /// * `client_secret` - Your Xero App's client secret.
     /// * `redirect_uri` - The redirect URI configured in your Xero App.
-    /// * `token_cache_path` - Path to a file for caching OAuth tokens.
     /// * `rate_limiter` - An Arc-wrapped, shared RateLimiter instance.
     pub async fn new(
         client_id: String,
         client_secret: String,
         redirect_uri: String,
-        token_cache_path: PathBuf,
         rate_limiter: Arc<RateLimiter>,
     ) -> Result<Self, XeroError> {
         debug!("Creating new XeroClient instance.");
@@ -59,7 +56,6 @@ impl XeroClient {
             client_id,
             client_secret,
             redirect_uri,
-            token_cache_path,
         ));
 
         info!("XeroClient created successfully.");
