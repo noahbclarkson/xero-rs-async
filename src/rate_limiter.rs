@@ -4,10 +4,8 @@ use crate::error::XeroError;
 use dashmap::DashMap;
 use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::fs;
 // Import the async Mutex
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{sleep, Duration};
@@ -29,37 +27,19 @@ struct TenantRateLimitState {
 pub struct RateLimiter {
     // Manages the 5 concurrent request limit globally for this client instance.
     concurrent_semaphore: Semaphore,
-    // Stores the rate limit state for each tenant.
+    // Stores the rate limit state for each tenant in memory.
     tenant_states: DashMap<Uuid, Arc<Mutex<TenantRateLimitState>>>,
-    // Path to the file for persisting state.
-    cache_path: PathBuf,
-    // A Mutex to protect file write operations.
-    file_write_lock: Mutex<()>,
 }
 
 impl RateLimiter {
-    /// Creates a new RateLimiter, loading previous state from a cache file if it exists.
-    pub async fn new(cache_path: PathBuf) -> Result<Self, XeroError> {
-        debug!("Initializing RateLimiter from cache: {:?}", cache_path);
-        let tenant_states: DashMap<Uuid, Arc<Mutex<TenantRateLimitState>>> =
-            if fs::try_exists(&cache_path).await? {
-                let data = fs::read_to_string(&cache_path).await?;
-                let loaded_map: HashMap<Uuid, TenantRateLimitState> =
-                    serde_json::from_str(&data).unwrap_or_default();
-                loaded_map
-                    .into_iter()
-                    .map(|(k, v)| (k, Arc::new(Mutex::new(v))))
-                    .collect()
-            } else {
-                DashMap::new()
-            };
+    /// Creates a new RateLimiter with in-memory state.
+    pub async fn new() -> Result<Self, XeroError> {
+        debug!("Initializing RateLimiter with in-memory state");
+        let tenant_states: DashMap<Uuid, Arc<Mutex<TenantRateLimitState>>> = DashMap::new();
 
         Ok(Self {
             concurrent_semaphore: Semaphore::new(CONCURRENT_LIMIT),
             tenant_states,
-            cache_path,
-            // Initialize the new Mutex
-            file_write_lock: Mutex::new(()),
         })
     }
 
@@ -111,30 +91,10 @@ impl RateLimiter {
         trace!("Permit granted. Recording request for tenant {}", tenant_id);
         state.requests.push_back(now);
 
-        // Drop the lock on the individual tenant's state before saving the whole map
-        // to avoid potential deadlocks if save_state needed to lock it again (it doesn't, but it's good practice).
+        // Drop the lock on the individual tenant's state
         drop(state);
-
-        // Persist the entire state map to the cache file, protected by the mutex.
-        self.save_state().await?;
 
         Ok(permit)
     }
 
-    /// Persists the current state of all tenants to the cache file.
-    async fn save_state(&self) -> Result<(), XeroError> {
-        // Acquire the file write lock before proceeding.
-        let _lock = self.file_write_lock.lock().await;
-        trace!("Acquired file write lock. Saving rate limiter state to cache.");
-
-        let mut serializable_map = HashMap::new();
-        for item in self.tenant_states.iter() {
-            let state = item.value().lock().await;
-            serializable_map.insert(*item.key(), state.clone());
-        }
-        let data = serde_json::to_string(&serializable_map)?;
-        fs::write(&self.cache_path, data).await?;
-        debug!("Rate limiter state saved successfully.");
-        Ok(())
-    }
 }
