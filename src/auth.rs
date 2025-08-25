@@ -4,8 +4,8 @@ use crate::error::XeroError;
 use log::{debug, info, trace, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use tokio::fs;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TokenSet {
@@ -34,7 +34,7 @@ pub struct TokenManager {
     client_id: String,
     client_secret: String,
     redirect_uri: String,
-    cache_path: PathBuf,
+    cached_token: Arc<Mutex<Option<TokenSet>>>,
 }
 
 impl TokenManager {
@@ -44,14 +44,13 @@ impl TokenManager {
         client_id: String,
         client_secret: String,
         redirect_uri: String,
-        cache_path: PathBuf,
     ) -> Self {
         Self {
             http_client,
             client_id,
             client_secret,
             redirect_uri,
-            cache_path,
+            cached_token: Arc::new(Mutex::new(None)),
         }
     }
 
