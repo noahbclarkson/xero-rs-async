@@ -52,13 +52,14 @@ impl<'de> serde::Deserialize<'de> for BankAccountType {
     {
         struct Visitor;
 
-        impl serde::de::Visitor<'_> for Visitor {
+        impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = BankAccountType;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a valid bank account type or unknown/empty string")
+                formatter.write_str("a string, a map, or null for BankAccountType")
             }
 
+            // This method handles string values like "BANK"
             fn visit_str<E>(self, value: &str) -> Result<BankAccountType, E>
             where
                 E: serde::de::Error,
@@ -71,9 +72,31 @@ impl<'de> serde::Deserialize<'de> for BankAccountType {
                     other => Ok(BankAccountType::Unknown(other.to_string())),
                 }
             }
+
+            // This NEW method handles the empty JSON object `{}`
+            fn visit_map<M>(self, mut map: M) -> Result<BankAccountType, M::Error>
+            where
+                M: serde::de::MapAccess<'de>,
+            {
+                // The API is sending an empty map for non-bank accounts.
+                // We consume it and treat it as "Unknown".
+                while let Some((_key, _value)) = map.next_entry::<serde_json::Value, serde_json::Value>()? {
+                    // Do nothing, just consume the entries if any
+                }
+                Ok(BankAccountType::Unknown(String::new()))
+            }
+
+            // This NEW method handles JSON `null` values
+            fn visit_unit<E>(self) -> Result<BankAccountType, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(BankAccountType::Unknown(String::new()))
+            }
         }
 
-        deserializer.deserialize_str(Visitor)
+        // Use the more flexible deserializer
+        deserializer.deserialize_any(Visitor)
     }
 }
 

@@ -638,8 +638,7 @@ async fn get_organisation_cis_settings() {
                 println!("Skipping CIS settings test: Not a UK organisation or CIS not enabled.");
             } else {
                 panic!(
-                    "API call to get organisation CIS settings failed with an unexpected error: {}",
-                    e
+                    "API call to get organisation CIS settings failed with an unexpected error: {e}"
                 );
             }
         }

@@ -95,8 +95,7 @@ impl TokenManager {
             let status = response.status();
             let message = response.text().await?;
             Err(XeroError::Auth(format!(
-                "Failed to exchange code: {} - {}",
-                status, message
+                "Failed to exchange code: {status} - {message}"
             )))
         }
     }
@@ -130,8 +129,7 @@ impl TokenManager {
             let status = response.status();
             let message = response.text().await?;
             Err(XeroError::Auth(format!(
-                "Failed to refresh token: {} - {}",
-                status, message
+                "Failed to refresh token: {status} - {message}"
             )))
         }
     }

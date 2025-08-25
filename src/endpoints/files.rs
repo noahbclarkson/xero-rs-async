@@ -38,7 +38,7 @@ impl FilesApi {
         R: DeserializeOwned,
         B: Serialize,
     {
-        let url = format!("{}{}", BASE_URL, path);
+        let url = format!("{BASE_URL}{path}");
         let access_token = if let Some(token) = &self.token_override {
             token.access_token.clone()
         } else {
@@ -66,10 +66,9 @@ impl FilesApi {
         if response.status().is_success() {
             let response_text = response.text().await?;
             serde_json::from_str::<R>(&response_text).map_err(|e| {
-                error!("Failed to deserialize JSON response from {}: {}", url, e);
+                error!("Failed to deserialize JSON response from {url}: {e}");
                 trace!(
-                    "Raw JSON response that failed to parse:\n---\n{}\n---",
-                    response_text
+                    "Raw JSON response that failed to parse:\n---\n{response_text}\n---"
                 );
                 XeroError::from(e)
             })
@@ -90,7 +89,7 @@ impl FilesApi {
     where
         B: Serialize,
     {
-        let url = format!("{}{}", BASE_URL, path);
+        let url = format!("{BASE_URL}{path}");
         let access_token = if let Some(token) = &self.token_override {
             token.access_token.clone()
         } else {
@@ -165,7 +164,7 @@ impl FilesApi {
 
     /// Retrieves a specific file by its ID.
     pub async fn get_file_by_id(&self, tenant_id: Uuid, file_id: Uuid) -> Result<File, XeroError> {
-        let path = format!("/Files/{}", file_id);
+        let path = format!("/Files/{file_id}");
         self.send_request(Method::GET, tenant_id, &path, None, None::<()>)
             .await
     }
@@ -176,8 +175,8 @@ impl FilesApi {
         tenant_id: Uuid,
         file_id: Uuid,
     ) -> Result<Vec<u8>, XeroError> {
-        let path = format!("/Files/{}/Content", file_id);
-        let url = format!("{}{}", BASE_URL, path);
+        let path = format!("/Files/{file_id}/Content");
+        let url = format!("{BASE_URL}{path}");
         let access_token = if let Some(token) = &self.token_override {
             token.access_token.clone()
         } else {
@@ -209,7 +208,7 @@ impl FilesApi {
         file_name: String,
         body: Vec<u8>,
     ) -> Result<File, XeroError> {
-        let url = format!("{}{}", BASE_URL, path);
+        let url = format!("{BASE_URL}{path}");
         let part = multipart::Part::bytes(body).file_name(file_name.clone());
         let form = multipart::Form::new().part("file", part);
 
@@ -234,12 +233,10 @@ impl FilesApi {
             let response_text = response.text().await?;
             serde_json::from_str::<File>(&response_text).map_err(|e| {
                 error!(
-                    "Failed to deserialize file upload response from {}: {}",
-                    url, e
+                    "Failed to deserialize file upload response from {url}: {e}"
                 );
                 trace!(
-                    "Raw JSON response from file upload that failed to parse:\n---\n{}\n---",
-                    response_text
+                    "Raw JSON response from file upload that failed to parse:\n---\n{response_text}\n---"
                 );
                 XeroError::from(e)
             })
@@ -269,7 +266,7 @@ impl FilesApi {
         file_name: String,
         body: Vec<u8>,
     ) -> Result<File, XeroError> {
-        let path = format!("/Files/{}", folder_id);
+        let path = format!("/Files/{folder_id}");
         self.upload_file_internal(tenant_id, &path, file_name, body)
             .await
     }
@@ -294,14 +291,14 @@ impl FilesApi {
             name: new_name,
             folder_id: new_folder_id,
         };
-        let path = format!("/Files/{}", file_id);
+        let path = format!("/Files/{file_id}");
         self.send_request(Method::PUT, tenant_id, &path, None, Some(body))
             .await
     }
 
     /// Deletes a file.
     pub async fn delete_file(&self, tenant_id: Uuid, file_id: Uuid) -> Result<(), XeroError> {
-        let path = format!("/Files/{}", file_id);
+        let path = format!("/Files/{file_id}");
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
     }
@@ -329,7 +326,7 @@ impl FilesApi {
         tenant_id: Uuid,
         folder_id: Uuid,
     ) -> Result<Folder, XeroError> {
-        let path = format!("/Folders/{}", folder_id);
+        let path = format!("/Folders/{folder_id}");
         self.send_request(Method::GET, tenant_id, &path, None, None::<()>)
             .await
     }
@@ -357,14 +354,14 @@ impl FilesApi {
             name: String,
         }
         let body = UpdateFolderRequest { name };
-        let path = format!("/Folders/{}", folder_id);
+        let path = format!("/Folders/{folder_id}");
         self.send_request(Method::PUT, tenant_id, &path, None, Some(body))
             .await
     }
 
     /// Deletes a folder.
     pub async fn delete_folder(&self, tenant_id: Uuid, folder_id: Uuid) -> Result<(), XeroError> {
-        let path = format!("/Folders/{}", folder_id);
+        let path = format!("/Folders/{folder_id}");
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
     }
@@ -376,7 +373,7 @@ impl FilesApi {
         tenant_id: Uuid,
         file_id: Uuid,
     ) -> Result<Vec<Association>, XeroError> {
-        let path = format!("/Files/{}/Associations", file_id);
+        let path = format!("/Files/{file_id}/Associations");
         let resp: AssociationsResponse = self
             .send_request(Method::GET, tenant_id, &path, None, None::<()>)
             .await?;
@@ -389,7 +386,7 @@ impl FilesApi {
         tenant_id: Uuid,
         object_id: Uuid,
     ) -> Result<Vec<Association>, XeroError> {
-        let path = format!("/Associations/{}", object_id);
+        let path = format!("/Associations/{object_id}");
         let resp: AssociationsResponse = self
             .send_request(Method::GET, tenant_id, &path, None, None::<()>)
             .await?;
@@ -425,7 +422,7 @@ impl FilesApi {
         file_id: Uuid,
         association: Association,
     ) -> Result<Association, XeroError> {
-        let path = format!("/Files/{}/Associations", file_id);
+        let path = format!("/Files/{file_id}/Associations");
         self.send_request(Method::POST, tenant_id, &path, None, Some(association))
             .await
     }
@@ -437,7 +434,7 @@ impl FilesApi {
         file_id: Uuid,
         association_id: Uuid,
     ) -> Result<(), XeroError> {
-        let path = format!("/Files/{}/Associations/{}", file_id, association_id);
+        let path = format!("/Files/{file_id}/Associations/{association_id}");
         self.send_request_empty_response(Method::DELETE, tenant_id, &path, None::<()>)
             .await
     }
