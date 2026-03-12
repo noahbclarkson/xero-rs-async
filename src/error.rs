@@ -13,12 +13,23 @@ pub enum XeroError {
     #[error("Serialization/Deserialization error: {0}")]
     Serde(#[from] serde_json::Error),
 
+    /// An error occurred while (de)serializing JSON data with the raw response captured.
+    #[error("Serialization/Deserialization error: {source}")]
+    SerdeWithBody {
+        source: serde_json::Error,
+        body: String,
+    },
+
     /// The Xero API returned a non-success status code with an error message.
     #[error("Xero API error ({status}): {message}")]
     Api {
         status: reqwest::StatusCode,
         message: String,
     },
+
+    /// An error occurred while deserializing XML data.
+    #[error("XML deserialization error: {0}")]
+    Xml(#[from] quick_xml::DeError),
 
     /// An error related to OAuth 2.0 authentication.
     #[error("Authentication error: {0}")]

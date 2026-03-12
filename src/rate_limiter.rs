@@ -32,7 +32,7 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    /// Creates a new RateLimiter with in-memory state.
+    /// Creates a new `RateLimiter` with in-memory state.
     pub async fn new() -> Result<Self, XeroError> {
         debug!("Initializing RateLimiter with in-memory state");
         let tenant_states: DashMap<Uuid, Arc<Mutex<TenantRateLimitState>>> = DashMap::new();
@@ -94,5 +94,4 @@ impl RateLimiter {
 
         Ok(permit)
     }
-
 }

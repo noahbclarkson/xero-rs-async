@@ -1,4 +1,4 @@
-//! Model for the BatchPayment resource.
+//! Model for the `BatchPayment` resource.
 
 use super::account::Account;
 use super::invoice::Invoice;

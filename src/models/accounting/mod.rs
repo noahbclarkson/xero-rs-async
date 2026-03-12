@@ -16,6 +16,7 @@ pub mod employee;
 pub mod expense_claim;
 pub mod history;
 pub mod invoice;
+pub mod invoice_reminder;
 pub mod item;
 pub mod journal;
 pub mod linked_transaction;

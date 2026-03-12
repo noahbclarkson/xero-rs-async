@@ -1,4 +1,4 @@
-//! Model for the BankTransfer resource.
+//! Model for the `BankTransfer` resource.
 
 use super::account::Account;
 use crate::util::xero_date_format_opt;
@@ -50,6 +50,7 @@ pub(crate) struct BankTransfersResponse {
 }
 
 // Wrapper for the request
+#[allow(dead_code)]
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct BankTransfersRequest {

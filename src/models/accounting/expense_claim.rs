@@ -1,4 +1,4 @@
-//! Model for the ExpenseClaim resource.
+//! Model for the `ExpenseClaim` resource.
 use super::payment::Payment;
 use super::receipt::Receipt;
 use super::user::User;
@@ -42,7 +42,7 @@ pub struct ExpenseClaim {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reporting_date: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payments: Option<Vec<Box<Payment>>>
+    pub payments: Option<Vec<Box<Payment>>>,
 }
 
 // Wrapper for the response

@@ -1,4 +1,4 @@
-//! Model for the ContactGroup resource.
+//! Model for the `ContactGroup` resource.
 
 use super::contact::Contact;
 use serde::{Deserialize, Serialize};

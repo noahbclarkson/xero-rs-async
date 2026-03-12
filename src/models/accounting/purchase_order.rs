@@ -1,4 +1,4 @@
-//! Model for the PurchaseOrder resource.
+//! Model for the `PurchaseOrder` resource.
 
 use super::common::{LineAmountType, LineItem};
 use super::contact::Contact;

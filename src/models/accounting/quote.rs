@@ -25,7 +25,7 @@ pub struct Quote {
     pub line_items: Vec<LineItem>,
     #[serde(with = "xero_date_format")]
     pub date: DateTime<Utc>,
-    #[serde(with = "xero_date_format_opt")]
+    #[serde(default, with = "xero_date_format_opt")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expiry_date: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tiny_http::{Response, Server};
 use url::Url;
@@ -55,17 +56,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_authorization_url(&scopes, state);
 
     println!("\n✅ Step 1: Your browser will now open for Xero authorization.");
-    println!(
-        "If it doesn't, please manually visit this URL:\n\n{auth_url}\n"
-    );
+    println!("If it doesn't, please manually visit this URL:\n\n{auth_url}\n");
     webbrowser::open(&auth_url).expect("Failed to open web browser.");
 
     // 4. Start a local server to listen for the callback
     let server_addr = "localhost:80";
     let server = Server::http(server_addr).unwrap_or_else(|_| panic!("Failed to start server on {server_addr}. Make sure no other services (like a web server) are using port 80 and that you have administrator privileges to run this command."));
-    println!(
-        "✅ Step 2: Waiting for authorization callback on {redirect_uri_str} ..."
-    );
+    println!("✅ Step 2: Waiting for authorization callback on {redirect_uri_str} ...");
     println!("Note: If you get an error page from Xero, please check that:");
     println!(
         "  - The redirect URI in your Xero app configuration exactly matches: {redirect_uri_str}"
@@ -142,7 +139,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ Step 3: Exchanging code for tokens...");
     match xero_client.token_manager.exchange_code(code).await {
         Ok(_) => {
-            println!("\n🎉 Success! Tokens have been received and saved to 'xero_token.json'.");
+            let token_path = save_token_to_file(&xero_client).await?;
+            println!(
+                "\n🎉 Success! Tokens have been received and saved to '{}'.",
+                token_path.display()
+            );
 
             // 7. Fetch and display connected tenants
             println!("\n✅ Step 4: Fetching connected tenants...");
@@ -154,6 +155,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+async fn save_token_to_file(
+    xero_client: &XeroClient,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let token_set = xero_client
+        .token_manager
+        .get_cached_token()
+        .await
+        .ok_or("Token cache is empty after exchange")?;
+
+    let token_path = env::var("XERO_TOKEN_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("xero_token.json"));
+
+    let token_json = serde_json::to_string_pretty(&token_set)?;
+    std::fs::write(&token_path, token_json)?;
+    Ok(token_path)
 }
 
 /// Struct to deserialize the response from the /connections endpoint.
@@ -186,10 +205,7 @@ async fn fetch_and_display_connections(
         } else {
             println!("\nAuthorized Tenants:");
             println!("{:-<65}", "");
-            println!(
-                "{:<38} | {:<12} | Name",
-                "Tenant ID", "Type"
-            );
+            println!("{:<38} | {:<12} | Name", "Tenant ID", "Type");
             println!("{:-<65}", "");
             for conn in connections {
                 println!(

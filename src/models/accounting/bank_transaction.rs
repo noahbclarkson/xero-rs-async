@@ -1,6 +1,6 @@
 // src/models/accounting/bank_transaction.rs
 
-//! Model for the BankTransaction resource.
+//! Model for the `BankTransaction` resource.
 
 use super::account::Account;
 use super::batch_payment::BatchPayment;

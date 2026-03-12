@@ -1,4 +1,4 @@
-//! Model for the LinkedTransaction resource.
+//! Model for the `LinkedTransaction` resource.
 
 use crate::util::xero_date_format_opt;
 use chrono::{DateTime, Utc};

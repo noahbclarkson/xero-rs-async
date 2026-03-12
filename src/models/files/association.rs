@@ -24,10 +24,22 @@ pub struct Association {
 
 pub type AssociationCount = HashMap<Uuid, u32>;
 
-// Wrapper for the response
+// Wrapper for the response (can be an object or a raw list).
 #[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub(crate) struct AssociationsResponse {
-    #[serde(rename = "Items")]
-    pub associations: Vec<Association>,
+#[serde(untagged)]
+pub(crate) enum AssociationsResponse {
+    Wrapper {
+        #[serde(rename = "Items")]
+        associations: Vec<Association>,
+    },
+    List(Vec<Association>),
+}
+
+impl AssociationsResponse {
+    pub fn into_vec(self) -> Vec<Association> {
+        match self {
+            Self::Wrapper { associations } => associations,
+            Self::List(items) => items,
+        }
+    }
 }

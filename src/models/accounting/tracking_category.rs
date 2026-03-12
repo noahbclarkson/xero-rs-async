@@ -1,4 +1,4 @@
-//! Model for the TrackingCategory resource.
+//! Model for the `TrackingCategory` resource.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

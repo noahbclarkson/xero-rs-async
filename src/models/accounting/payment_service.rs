@@ -1,4 +1,4 @@
-//! Model for the PaymentService resource.
+//! Model for the `PaymentService` resource.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

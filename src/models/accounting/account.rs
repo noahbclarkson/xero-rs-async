@@ -80,7 +80,9 @@ impl<'de> serde::Deserialize<'de> for BankAccountType {
             {
                 // The API is sending an empty map for non-bank accounts.
                 // We consume it and treat it as "Unknown".
-                while let Some((_key, _value)) = map.next_entry::<serde_json::Value, serde_json::Value>()? {
+                while let Some((_key, _value)) =
+                    map.next_entry::<serde_json::Value, serde_json::Value>()?
+                {
                     // Do nothing, just consume the entries if any
                 }
                 Ok(BankAccountType::Unknown(String::new()))

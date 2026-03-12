@@ -1,6 +1,9 @@
+#![cfg(feature = "files")]
+
 // tests/files_get.rs
 
 mod common;
+use common::{log_raw_accounting_response, log_raw_files_response, XeroTestResult};
 
 #[tokio::test]
 async fn get_folders_and_by_id() {
@@ -8,23 +11,26 @@ async fn get_folders_and_by_id() {
     let api = test_client.client.files_for_tenant(test_client.tenant_id);
 
     let result = api.get_folders(None).await;
-    let folders = result.expect("API call to get folders failed");
+    let folders = result.expect_xero("API call to get folders failed");
 
-    assert!(
-        folders.iter().any(|f| f.name == "Inbox"),
-        "Expected to find the default 'Inbox' folder."
-    );
+    if !folders.iter().any(|f| f.name == "Inbox") {
+        log_raw_files_response(&test_client, "/Folders", None).await;
+        panic!("Expected to find the default 'Inbox' folder.");
+    }
     println!("Successfully retrieved {} folders.", folders.len());
 
     // Test getting a single folder by ID
-    let inbox_folder = folders
-        .iter()
-        .find(|f| f.name == "Inbox")
-        .expect("Inbox folder not found");
+    let inbox_folder = match folders.iter().find(|f| f.name == "Inbox") {
+        Some(folder) => folder,
+        None => {
+            log_raw_files_response(&test_client, "/Folders", None).await;
+            panic!("Inbox folder not found");
+        }
+    };
     let inbox_id = inbox_folder.id;
 
     let single_result = api.get_folder_by_id(inbox_id).await;
-    let single_folder = single_result.expect("Failed to get single folder by ID");
+    let single_folder = single_result.expect_xero("Failed to get single folder by ID");
 
     assert_eq!(
         single_folder.id, inbox_id,
@@ -43,7 +49,7 @@ async fn get_files_and_content() {
     let api = test_client.client.files_for_tenant(test_client.tenant_id);
 
     let result = api.get_files(None, None, None, None).await;
-    let files = result.expect("API call to get files failed");
+    let files = result.expect_xero("API call to get files failed");
 
     println!("Successfully retrieved {} files.", files.len());
 
@@ -53,7 +59,7 @@ async fn get_files_and_content() {
 
         // Get file by ID
         let single_result = api.get_file_by_id(file_id).await;
-        let single_file = single_result.expect("Failed to get single file by ID");
+        let single_file = single_result.expect_xero("Failed to get single file by ID");
         assert_eq!(single_file.id, file_id);
         println!(
             "Successfully retrieved single file by ID: {}",
@@ -62,7 +68,7 @@ async fn get_files_and_content() {
 
         // Get file content
         let content_result = api.get_file_content(file_id).await;
-        let content = content_result.expect("Failed to get file content");
+        let content = content_result.expect_xero("Failed to get file content");
         assert_eq!(content.len() as u64, single_file.size);
         println!(
             "Successfully retrieved file content for '{}' ({} bytes).",
@@ -98,14 +104,18 @@ async fn get_associations() {
             None,
         )
         .await
-        .expect("Failed to get invoices to test associations");
+        .expect_xero("Failed to get invoices to test associations");
+    if invoices.is_empty() {
+        log_raw_accounting_response(&test_client, "/Invoices", None).await;
+    }
 
     if let Some(invoice) = invoices.first() {
         let object_id = invoice.invoice_id.unwrap();
 
         // Test getting associations for that object
         let object_assoc_result = files_api.get_object_associations(object_id).await;
-        let object_associations = object_assoc_result.expect("Failed to get object associations");
+        let object_associations =
+            object_assoc_result.expect_xero("Failed to get object associations");
         println!(
             "Found {} associations for invoice {}",
             object_associations.len(),
@@ -114,7 +124,7 @@ async fn get_associations() {
 
         // Test getting association count
         let count_result = files_api.get_associations_count(vec![object_id]).await;
-        let count_map = count_result.expect("Failed to get association count");
+        let count_map = count_result.expect_xero("Failed to get association count");
         let count = count_map.get(&object_id).unwrap_or(&0);
         assert_eq!(*count as usize, object_associations.len());
         println!("Association count for invoice {object_id} is {count}.");
@@ -123,8 +133,13 @@ async fn get_associations() {
         if let Some(association) = object_associations.first() {
             let file_id = association.file_id;
             let file_assoc_result = files_api.get_file_associations(file_id).await;
-            let file_associations = file_assoc_result.expect("Failed to get file associations");
-            assert!(!file_associations.is_empty());
+            let file_associations =
+                file_assoc_result.expect_xero("Failed to get file associations");
+            if file_associations.is_empty() {
+                let path = format!("/Files/{file_id}/Associations");
+                log_raw_files_response(&test_client, &path, None).await;
+                panic!("Expected file associations for file {file_id}");
+            }
             println!(
                 "Found {} associations for file {}",
                 file_associations.len(),

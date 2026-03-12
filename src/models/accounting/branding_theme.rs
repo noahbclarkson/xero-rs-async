@@ -1,4 +1,4 @@
-//! Model for the BrandingTheme resource.
+//! Model for the `BrandingTheme` resource.
 
 use crate::util::xero_date_format_opt;
 use chrono::{DateTime, Utc};

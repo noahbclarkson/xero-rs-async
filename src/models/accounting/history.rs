@@ -1,4 +1,4 @@
-//! Model for the HistoryRecord resource.
+//! Model for the `HistoryRecord` resource.
 use crate::util::xero_date_format;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

@@ -1,4 +1,4 @@
-//! Model for the RepeatingInvoice resource.
+//! Model for the `RepeatingInvoice` resource.
 
 use super::common::{LineAmountType, LineItem, PaymentTermType};
 use super::contact::Contact;

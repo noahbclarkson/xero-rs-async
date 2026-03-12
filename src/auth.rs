@@ -20,6 +20,7 @@ pub struct TokenSet {
 
 impl TokenSet {
     /// Checks if the access token is expired or will expire within the next 60 seconds.
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         let now = chrono::Utc::now();
         (self.obtained_at + chrono::Duration::seconds(self.expires_in as i64))
@@ -39,6 +40,7 @@ pub struct TokenManager {
 
 impl TokenManager {
     /// Creates a new `TokenManager`.
+    #[must_use]
     pub fn new(
         http_client: Client,
         client_id: String,
@@ -55,10 +57,11 @@ impl TokenManager {
     }
 
     /// Generates the authorization URL to which the user should be redirected.
+    #[must_use]
     pub fn get_authorization_url(&self, scopes: &[&str], state: &str) -> String {
         let scope_str = scopes.join(" ");
         use url::Url;
-        
+
         let mut url = Url::parse("https://login.xero.com/identity/connect/authorize").unwrap();
         url.query_pairs_mut()
             .append_pair("response_type", "code")
@@ -66,12 +69,15 @@ impl TokenManager {
             .append_pair("redirect_uri", &self.redirect_uri)
             .append_pair("scope", &scope_str)
             .append_pair("state", state);
-        
+
         url.to_string()
     }
 
-    /// Exchanges an authorization code for a token set.
-    pub async fn exchange_code(&self, code: &str) -> Result<TokenSet, XeroError> {
+    async fn exchange_code_inner(
+        &self,
+        code: &str,
+        persist_cache: bool,
+    ) -> Result<TokenSet, XeroError> {
         debug!("Exchanging authorization code for token set.");
         let params = [
             ("grant_type", "authorization_code"),
@@ -88,8 +94,12 @@ impl TokenManager {
 
         if response.status().is_success() {
             let token_set = response.json::<TokenSet>().await?;
-            info!("Successfully exchanged code for token set. Saving to in-memory cache.");
-            self.save_token(&token_set).await;
+            if persist_cache {
+                info!("Successfully exchanged code for token set. Saving to in-memory cache.");
+                self.save_token(&token_set).await;
+            } else {
+                info!("Successfully exchanged code for token set.");
+            }
             Ok(token_set)
         } else {
             let status = response.status();
@@ -100,8 +110,29 @@ impl TokenManager {
         }
     }
 
+    /// Exchanges an authorization code for a token set.
+    pub async fn exchange_code(&self, code: &str) -> Result<TokenSet, XeroError> {
+        self.exchange_code_inner(code, true).await
+    }
+
+    /// Exchanges an authorization code without mutating in-memory token cache.
+    ///
+    /// Useful for multi-tenant/server workflows where tokens are persisted externally
+    /// and a shared cache could leak auth context between requests.
+    pub async fn exchange_code_no_cache(&self, code: &str) -> Result<TokenSet, XeroError> {
+        self.exchange_code_inner(code, false).await
+    }
+
     /// Refreshes an expired access token using a refresh token.
-    pub async fn refresh_token(&self, token_set: &TokenSet) -> Result<TokenSet, XeroError> {
+    ///
+    /// Retries up to 2 times (3 total attempts) with backoff on transient
+    /// network errors.  HTTP 4xx responses are **not** retried because they
+    /// indicate a permanent token problem (e.g. `invalid_grant`).
+    async fn refresh_token_inner(
+        &self,
+        token_set: &TokenSet,
+        persist_cache: bool,
+    ) -> Result<TokenSet, XeroError> {
         info!("Attempting to refresh access token.");
         let refresh_token = token_set
             .refresh_token
@@ -112,26 +143,90 @@ impl TokenManager {
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
         ];
-        let response = self
-            .http_client
-            .post("https://identity.xero.com/connect/token")
-            .basic_auth(&self.client_id, Some(&self.client_secret))
-            .form(&params)
-            .send()
-            .await?;
 
-        if response.status().is_success() {
-            let new_token_set = response.json::<TokenSet>().await?;
-            info!("Successfully refreshed token set. Saving to in-memory cache.");
-            self.save_token(&new_token_set).await;
-            Ok(new_token_set)
-        } else {
-            let status = response.status();
-            let message = response.text().await?;
-            Err(XeroError::Auth(format!(
-                "Failed to refresh token: {status} - {message}"
-            )))
+        let backoff_ms = [500u64, 1000];
+        let max_attempts: usize = 3;
+        let mut last_err: Option<XeroError> = None;
+
+        for attempt in 0..max_attempts {
+            let result = self
+                .http_client
+                .post("https://identity.xero.com/connect/token")
+                .basic_auth(&self.client_id, Some(&self.client_secret))
+                .form(&params)
+                .send()
+                .await;
+
+            match result {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        let new_token_set = response.json::<TokenSet>().await?;
+                        if persist_cache {
+                            info!("Successfully refreshed token set. Saving to in-memory cache.");
+                            self.save_token(&new_token_set).await;
+                        } else {
+                            info!("Successfully refreshed token set.");
+                        }
+                        return Ok(new_token_set);
+                    }
+
+                    // Non-success HTTP response – do NOT retry 4xx errors as they
+                    // indicate a permanent problem (bad token, revoked grant, etc.).
+                    let status = response.status();
+                    let message = response.text().await?;
+                    if status.is_client_error() {
+                        return Err(XeroError::Auth(format!(
+                            "Failed to refresh token: {status} - {message}"
+                        )));
+                    }
+                    // 5xx or other server-side errors are transient – retry.
+                    warn!(
+                        "Token refresh attempt {}/{} got server error {status}: {message}",
+                        attempt + 1,
+                        max_attempts
+                    );
+                    last_err = Some(XeroError::Auth(format!(
+                        "Failed to refresh token: {status} - {message}"
+                    )));
+                }
+                Err(e) => {
+                    // Network / connection errors are transient – retry.
+                    warn!(
+                        "Token refresh attempt {}/{} failed with network error: {e}",
+                        attempt + 1,
+                        max_attempts
+                    );
+                    last_err = Some(XeroError::Request(e));
+                }
+            }
+
+            // Sleep before the next retry (skip sleep after the last attempt).
+            if attempt < max_attempts - 1 {
+                let delay = backoff_ms[attempt];
+                debug!("Retrying token refresh in {delay}ms");
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
         }
+
+        Err(last_err.unwrap_or_else(|| {
+            XeroError::Auth("Token refresh failed after all retry attempts".to_string())
+        }))
+    }
+
+    /// Refreshes an expired access token using a refresh token.
+    pub async fn refresh_token(&self, token_set: &TokenSet) -> Result<TokenSet, XeroError> {
+        self.refresh_token_inner(token_set, true).await
+    }
+
+    /// Refreshes a token without mutating in-memory token cache.
+    ///
+    /// Useful for per-connection token management where the caller persists
+    /// refreshed tokens in its own storage.
+    pub async fn refresh_token_no_cache(
+        &self,
+        token_set: &TokenSet,
+    ) -> Result<TokenSet, XeroError> {
+        self.refresh_token_inner(token_set, false).await
     }
 
     /// Retrieves the current valid access token, refreshing it if necessary.
@@ -143,8 +238,7 @@ impl TokenManager {
         trace!("Loaded token set from in-memory cache.");
 
         // Check if token is expired or close to expiring
-        if token_set.is_expired()
-        {
+        if token_set.is_expired() {
             warn!("Access token expired or nearing expiry. Refreshing...");
             token_set = self.refresh_token(&token_set).await?;
         } else {

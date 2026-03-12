@@ -1,8 +1,8 @@
-//! Model for the CreditNote resource.
+//! Model for the `CreditNote` resource.
 
 use super::common::{Allocation, LineAmountType, LineItem};
 use super::contact::Contact;
-use crate::util::{xero_date_format_opt};
+use crate::util::xero_date_format_opt;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

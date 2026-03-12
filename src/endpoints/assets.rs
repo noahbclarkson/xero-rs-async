@@ -3,15 +3,13 @@
 use crate::auth::TokenSet;
 use crate::client::XeroClient;
 use crate::error::XeroError;
+use crate::http::ApiClient;
 use crate::models::assets::{
     asset::{Asset, AssetStatus, AssetsResponse},
-    asset_type::AssetType,
+    asset_type::{AssetType, AssetTypesResponse},
     settings::Settings,
 };
-use log::{error, trace};
 use reqwest::Method;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -20,106 +18,47 @@ const BASE_URL: &str = "https://api.xero.com/assets.xro/1.0";
 /// A handle to the Assets API endpoints.
 #[derive(Debug, Clone)]
 pub struct AssetsApi {
-    client: XeroClient,
-    token_override: Option<Arc<TokenSet>>,
-}
-
-/// Private helper methods for the Assets API.
-impl AssetsApi {
-    async fn send_request<R, B>(
-        &self,
-        method: Method,
-        tenant_id: Uuid,
-        path: &str,
-        query: Option<&[(String, String)]>,
-        body: Option<B>,
-    ) -> Result<R, XeroError>
-    where
-        R: DeserializeOwned,
-        B: Serialize,
-    {
-        let url = format!("{BASE_URL}{path}");
-        let access_token = if let Some(token) = &self.token_override {
-            token.access_token.clone()
-        } else {
-            self.client.token_manager.get_access_token().await?
-        };
-
-        let mut builder = self
-            .client
-            .http_client
-            .request(method, &url)
-            .bearer_auth(access_token)
-            .header("xero-tenant-id", tenant_id.to_string())
-            .header("Accept", "application/json");
-
-        if let Some(q) = query {
-            builder = builder.query(q);
-        }
-        if let Some(b) = body {
-            builder = builder.json(&b);
-        }
-
-        let _permit = self.client.rate_limiter.acquire_permit(tenant_id).await?;
-        let response = builder.send().await?;
-
-        if response.status().is_success() {
-            let response_text = response.text().await?;
-            serde_json::from_str::<R>(&response_text).map_err(|e| {
-                error!("Failed to deserialize JSON response from {url}: {e}");
-                trace!(
-                    "Raw JSON response that failed to parse:\n---\n{response_text}\n---"
-                );
-                XeroError::from(e)
-            })
-        } else {
-            let status = response.status();
-            let message = response.text().await?;
-            Err(XeroError::Api { status, message })
-        }
-    }
+    client: ApiClient,
 }
 
 impl AssetsApi {
-    pub(crate) fn new(client: XeroClient) -> Self {
+    pub(crate) fn new(client: XeroClient, tenant_id: Uuid) -> Self {
         Self {
-            client,
-            token_override: None,
+            client: ApiClient::new(
+                BASE_URL,
+                tenant_id,
+                client.http_client.clone(),
+                client.token_manager.clone(),
+                client.rate_limiter.clone(),
+            ),
         }
     }
 
     pub(crate) fn with_token_override(mut self, token: Arc<TokenSet>) -> Self {
-        self.token_override = Some(token);
+        self.client = self.client.with_token_override(token);
         self
     }
 
     /// Retrieves a list of asset types.
-    pub async fn get_asset_types(&self, tenant_id: Uuid) -> Result<Vec<AssetType>, XeroError> {
-        self.send_request(Method::GET, tenant_id, "/AssetTypes", None, None::<()>)
-            .await
+    pub async fn get_asset_types(&self) -> Result<Vec<AssetType>, XeroError> {
+        let resp: AssetTypesResponse = self
+            .client
+            .send_request(Method::GET, "/AssetTypes", None, None::<()>)
+            .await?;
+        Ok(resp.into_vec())
     }
 
     /// Creates a new asset type.
-    pub async fn create_asset_type(
-        &self,
-        tenant_id: Uuid,
-        asset_type: AssetType,
-    ) -> Result<AssetType, XeroError> {
-        self.send_request(
-            Method::POST,
-            tenant_id,
-            "/AssetTypes",
-            None,
-            Some(asset_type),
-        )
-        .await
+    pub async fn create_asset_type(&self, asset_type: AssetType) -> Result<AssetType, XeroError> {
+        self.client
+            .send_request(Method::POST, "/AssetTypes", None, Some(asset_type))
+            .await
     }
 
     /// Retrieves a list of assets.
     #[allow(clippy::too_many_arguments)]
     pub async fn get_assets(
         &self,
-        tenant_id: Uuid,
         status: AssetStatus,
         page: Option<u32>,
         page_size: Option<u32>,
@@ -145,31 +84,40 @@ impl AssetsApi {
         }
 
         let resp: AssetsResponse = self
-            .send_request(Method::GET, tenant_id, "/Assets", Some(&query), None::<()>)
+            .client
+            .send_request(Method::GET, "/Assets", Some(&query), None::<()>)
             .await?;
         Ok(resp.items)
     }
 
     /// Retrieves a single asset by its ID.
-    pub async fn get_asset_by_id(
-        &self,
-        tenant_id: Uuid,
-        asset_id: Uuid,
-    ) -> Result<Asset, XeroError> {
+    pub async fn get_asset_by_id(&self, asset_id: Uuid) -> Result<Asset, XeroError> {
         let path = format!("/Assets/{asset_id}");
-        self.send_request(Method::GET, tenant_id, &path, None, None::<()>)
+        self.client
+            .send_request(Method::GET, &path, None, None::<()>)
             .await
     }
 
     /// Creates a new draft fixed asset.
-    pub async fn create_asset(&self, tenant_id: Uuid, asset: Asset) -> Result<Asset, XeroError> {
-        self.send_request(Method::POST, tenant_id, "/Assets", None, Some(asset))
+    pub async fn create_asset(&self, asset: Asset) -> Result<Asset, XeroError> {
+        self.client
+            .send_request(Method::POST, "/Assets", None, Some(asset))
             .await
     }
 
     /// Retrieves the organisation's fixed asset settings.
-    pub async fn get_asset_settings(&self, tenant_id: Uuid) -> Result<Settings, XeroError> {
-        self.send_request(Method::GET, tenant_id, "/Settings", None, None::<()>)
+    pub async fn get_asset_settings(&self) -> Result<Settings, XeroError> {
+        self.client
+            .send_request(Method::GET, "/Settings", None, None::<()>)
+            .await
+    }
+
+    /// Debug method: Returns the raw JSON response from the Assets API.
+    /// Use this to diagnose deserialization issues.
+    pub async fn debug_get_assets_raw(&self, status: AssetStatus) -> Result<String, XeroError> {
+        let query = vec![("status".to_string(), format!("{status:?}").to_uppercase())];
+        self.client
+            .send_request_text(Method::GET, "/Assets", Some(&query))
             .await
     }
 }

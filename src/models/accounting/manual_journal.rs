@@ -1,4 +1,4 @@
-//! Model for the ManualJournal resource.
+//! Model for the `ManualJournal` resource.
 
 use super::common::{LineAmountType, TrackingCategory};
 use crate::util::xero_date_format_opt;

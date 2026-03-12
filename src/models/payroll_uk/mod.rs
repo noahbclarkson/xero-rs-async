@@ -1,0 +1,30 @@
+//! Models for the UK Payroll API.
+
+pub mod common;
+pub mod deduction;
+pub mod earnings_order;
+pub mod earnings_rate;
+pub mod employee;
+pub mod employee_leave;
+pub mod employee_leave_balance;
+pub mod employee_leave_period;
+pub mod employee_leave_type;
+pub mod employee_opening_balances;
+pub mod employee_pay_templates;
+pub mod employee_statutory_leave_balance;
+pub mod employee_statutory_leaves_summary;
+pub mod employee_statutory_sick_leave;
+pub mod employee_tax;
+pub mod employer_pension;
+pub mod employment;
+pub mod leave_type;
+pub mod pay_run;
+pub mod pay_run_calendar;
+pub mod pay_slip;
+pub mod payment_method;
+pub mod reimbursement;
+pub mod salary_and_wages;
+pub mod settings;
+pub mod timesheet;
+pub mod tracking_category;
+pub mod working_pattern;

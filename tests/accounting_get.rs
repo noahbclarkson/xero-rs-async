@@ -1,9 +1,11 @@
 // tests/accounting_get.rs
 
 mod common;
+use common::{assert_non_empty_accounting, log_raw_accounting_response, XeroTestResult};
 use xero_rs_async::models::accounting::invoice::InvoiceType;
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_organisation() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -11,7 +13,7 @@ async fn get_organisation() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_organisation().await;
 
-    let orgs = result.expect("API call to get organisation failed");
+    let orgs = result.expect_xero("API call to get organisation failed");
     assert_eq!(orgs.len(), 1, "Expected exactly one organisation.");
     let org = &orgs[0];
     // FIX: Removed the assertion that the company must be a demo company.
@@ -20,6 +22,7 @@ async fn get_organisation() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_accounts() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -27,11 +30,15 @@ async fn get_accounts() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_accounts(None, None, None, None).await;
 
-    let accounts = result.expect("API call to get accounts failed");
-    assert!(
-        !accounts.is_empty(),
-        "Expected to find at least one account in the demo company."
-    );
+    let accounts = result.expect_xero("API call to get accounts failed");
+    assert_non_empty_accounting(
+        &test_client,
+        &accounts,
+        "Expected to find at least one account in the demo company.",
+        "/Accounts",
+        None,
+    )
+    .await;
     println!("Successfully retrieved {} accounts.", accounts.len());
 
     // Test getting a single account by ID
@@ -39,7 +46,7 @@ async fn get_accounts() {
     let single_result = api
         .get_accounts(Some(first_account_id), None, None, None)
         .await;
-    let single_account_vec = single_result.expect("Failed to get single account by ID");
+    let single_account_vec = single_result.expect_xero("Failed to get single account by ID");
     assert_eq!(
         single_account_vec.len(),
         1,
@@ -53,6 +60,7 @@ async fn get_accounts() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_invoices() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -74,15 +82,20 @@ async fn get_invoices() {
         )
         .await;
 
-    let invoices = result.expect("API call to get invoices failed");
-    assert!(
-        !invoices.is_empty(),
-        "Expected to find at least one invoice in the demo company."
-    );
+    let invoices = result.expect_xero("API call to get invoices failed");
+    assert_non_empty_accounting(
+        &test_client,
+        &invoices,
+        "Expected to find at least one invoice in the demo company.",
+        "/Invoices",
+        None,
+    )
+    .await;
     println!("Successfully retrieved {} invoices.", invoices.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_contacts() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -92,15 +105,20 @@ async fn get_contacts() {
         .get_contacts(None, None, None, None, None, None, None, None, None, None)
         .await;
 
-    let contacts = result.expect("API call to get contacts failed");
-    assert!(
-        !contacts.is_empty(),
-        "Expected to find at least one contact in the demo company."
-    );
+    let contacts = result.expect_xero("API call to get contacts failed");
+    assert_non_empty_accounting(
+        &test_client,
+        &contacts,
+        "Expected to find at least one contact in the demo company.",
+        "/Contacts",
+        None,
+    )
+    .await;
     println!("Successfully retrieved {} contacts.", contacts.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_bank_transactions() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -110,11 +128,15 @@ async fn get_bank_transactions() {
         .get_bank_transactions(None, None, None, None, Some(1), None)
         .await;
 
-    let transactions = result.expect("API call to get bank transactions failed");
-    assert!(
-        !transactions.is_empty(),
-        "Expected to find at least one bank transaction."
-    );
+    let transactions = result.expect_xero("API call to get bank transactions failed");
+    assert_non_empty_accounting(
+        &test_client,
+        &transactions,
+        "Expected to find at least one bank transaction.",
+        "/BankTransactions",
+        None,
+    )
+    .await;
     println!(
         "Successfully retrieved {} bank transactions.",
         transactions.len()
@@ -122,6 +144,7 @@ async fn get_bank_transactions() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_branding_themes() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -129,15 +152,16 @@ async fn get_branding_themes() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_branding_themes(None).await;
 
-    let themes = result.expect("API call to get branding themes failed");
-    assert!(
-        themes.iter().any(|t| t.name.as_deref() == Some("Standard")),
-        "Expected to find the 'Standard' branding theme."
-    );
+    let themes = result.expect_xero("API call to get branding themes failed");
+    if !themes.iter().any(|t| t.name.as_deref() == Some("Standard")) {
+        log_raw_accounting_response(&test_client, "/BrandingThemes", None).await;
+        panic!("Expected to find the 'Standard' branding theme.");
+    }
     println!("Successfully retrieved {} branding themes.", themes.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_currencies() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -145,15 +169,20 @@ async fn get_currencies() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_currencies(None, None).await;
 
-    let currencies = result.expect("API call to get currencies failed");
-    assert!(
-        !currencies.is_empty(),
-        "Expected to find at least one currency."
-    );
+    let currencies = result.expect_xero("API call to get currencies failed");
+    assert_non_empty_accounting(
+        &test_client,
+        &currencies,
+        "Expected to find at least one currency.",
+        "/Currencies",
+        None,
+    )
+    .await;
     println!("Successfully retrieved {} currencies.", currencies.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_report_balance_sheet() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -161,12 +190,12 @@ async fn get_report_balance_sheet() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_report("BalanceSheet", vec![]).await;
 
-    let report = result.expect("API call to get BalanceSheet failed");
-    assert_eq!(report.report_id, "BalanceSheet");
-    assert!(
-        !report.rows.is_empty(),
-        "Balance sheet report should not be empty."
-    );
+    let report = result.expect_xero("API call to get BalanceSheet failed");
+    assert_eq!(report.report_id.as_deref(), Some("BalanceSheet"));
+    if report.rows.is_empty() {
+        log_raw_accounting_response(&test_client, "/Reports/BalanceSheet", None).await;
+        panic!("Balance sheet report should not be empty.");
+    }
     println!(
         "Successfully retrieved Balance Sheet report titled '{}'",
         report.report_name
@@ -174,6 +203,7 @@ async fn get_report_balance_sheet() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_users() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -181,12 +211,20 @@ async fn get_users() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_users(None, None, None, None).await;
 
-    let users = result.expect("API call to get users failed");
-    assert!(!users.is_empty(), "Expected to find at least one user.");
+    let users = result.expect_xero("API call to get users failed");
+    assert_non_empty_accounting(
+        &test_client,
+        &users,
+        "Expected to find at least one user.",
+        "/Users",
+        None,
+    )
+    .await;
     println!("Successfully retrieved {} users.", users.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_items() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -194,12 +232,13 @@ async fn get_items() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_items(None, None, None, None).await;
 
-    let items = result.expect("API call to get items failed");
-    assert!(!items.is_empty(), "Expected to find at least one item.");
+    let items = result.expect_xero("API call to get items failed");
+    // Demo or real companies may have zero items.
     println!("Successfully retrieved {} items.", items.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_tax_rates() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -207,15 +246,20 @@ async fn get_tax_rates() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_tax_rates(None, None).await;
 
-    let tax_rates = result.expect("API call to get tax rates failed");
-    assert!(
-        !tax_rates.is_empty(),
-        "Expected to find at least one tax rate."
-    );
+    let tax_rates = result.expect_xero("API call to get tax rates failed");
+    assert_non_empty_accounting(
+        &test_client,
+        &tax_rates,
+        "Expected to find at least one tax rate.",
+        "/TaxRates",
+        None,
+    )
+    .await;
     println!("Successfully retrieved {} tax rates.", tax_rates.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_credit_notes() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -225,7 +269,7 @@ async fn get_credit_notes() {
         .get_credit_notes(None, None, None, None, None, None)
         .await;
 
-    let credit_notes = result.expect("API call to get credit notes failed");
+    let credit_notes = result.expect_xero("API call to get credit notes failed");
     // The demo company may not have credit notes, so we don't assert !is_empty()
     println!(
         "Successfully retrieved {} credit notes.",
@@ -234,6 +278,7 @@ async fn get_credit_notes() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_purchase_orders() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -243,11 +288,8 @@ async fn get_purchase_orders() {
         .get_purchase_orders(None, None, None, None, None, None, None)
         .await;
 
-    let purchase_orders = result.expect("API call to get purchase orders failed");
-    assert!(
-        !purchase_orders.is_empty(),
-        "Expected to find at least one purchase order."
-    );
+    let purchase_orders = result.expect_xero("API call to get purchase orders failed");
+    // Demo or real companies may have zero purchase orders.
     println!(
         "Successfully retrieved {} purchase orders.",
         purchase_orders.len()
@@ -255,6 +297,7 @@ async fn get_purchase_orders() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_manual_journals() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -264,7 +307,7 @@ async fn get_manual_journals() {
         .get_manual_journals(None, None, None, None, None, None)
         .await;
 
-    let manual_journals = result.expect("API call to get manual journals failed");
+    let manual_journals = result.expect_xero("API call to get manual journals failed");
     // The demo company may not have manual journals, so we don't assert !is_empty()
     println!(
         "Successfully retrieved {} manual journals.",
@@ -273,6 +316,7 @@ async fn get_manual_journals() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_tracking_categories() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -280,7 +324,7 @@ async fn get_tracking_categories() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_tracking_categories(None, None, None, None).await;
 
-    let tracking_categories = result.expect("API call to get tracking categories failed");
+    let tracking_categories = result.expect_xero("API call to get tracking categories failed");
     // FIX: Don't assert that the list is not empty, as the demo company may not have any.
     // The test now passes if the API call is successful.
     println!(
@@ -290,6 +334,7 @@ async fn get_tracking_categories() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_bank_transfers() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -297,12 +342,13 @@ async fn get_bank_transfers() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_bank_transfers(None, None, None, None).await;
 
-    let transfers = result.expect("API call to get bank transfers failed");
+    let transfers = result.expect_xero("API call to get bank transfers failed");
     // Demo company may not have these
     println!("Successfully retrieved {} bank transfers.", transfers.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_batch_payments() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -310,7 +356,7 @@ async fn get_batch_payments() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_batch_payments(None, None, None, None).await;
 
-    let payments = result.expect("API call to get batch payments failed");
+    let payments = result.expect_xero("API call to get batch payments failed");
     // Demo company may not have these
     println!("Successfully retrieved {} batch payments.", payments.len());
 }
@@ -327,7 +373,7 @@ async fn get_branding_theme_payment_services() {
     let themes = api
         .get_branding_themes(None)
         .await
-        .expect("Failed to get branding themes to test payment services");
+        .expect_xero("Failed to get branding themes to test payment services");
     let standard_theme = themes
         .iter()
         .find(|t| t.name.as_deref() == Some("Standard"))
@@ -337,7 +383,7 @@ async fn get_branding_theme_payment_services() {
     // Now, get the payment services for that theme
     let result = api.get_branding_theme_payment_services(theme_id).await;
 
-    let services = result.expect("API call to get branding theme payment services failed");
+    let services = result.expect_xero("API call to get branding theme payment services failed");
     // Demo company may not have these configured
     println!(
         "Successfully retrieved {} payment services for theme '{}'.",
@@ -347,6 +393,7 @@ async fn get_branding_theme_payment_services() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_budgets() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -354,12 +401,13 @@ async fn get_budgets() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_budgets(None, None, None).await;
 
-    let budgets = result.expect("API call to get budgets failed");
+    let budgets = result.expect_xero("API call to get budgets failed");
     // Demo company may not have these
     println!("Successfully retrieved {} budgets.", budgets.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_contact_groups() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -367,15 +415,13 @@ async fn get_contact_groups() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_contact_groups(None, None, None).await;
 
-    let groups = result.expect("API call to get contact groups failed");
-    assert!(
-        !groups.is_empty(),
-        "Expected to find at least one contact group."
-    );
+    let groups = result.expect_xero("API call to get contact groups failed");
+    // Demo or real companies may have zero contact groups.
     println!("Successfully retrieved {} contact groups.", groups.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_employees() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -383,11 +429,12 @@ async fn get_employees() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_employees(None, None, None, None).await;
 
-    let employees = result.expect("API call to get employees failed");
+    let employees = result.expect_xero("API call to get employees failed");
     println!("Successfully retrieved {} employees.", employees.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_expense_claims() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -395,12 +442,13 @@ async fn get_expense_claims() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_expense_claims(None, None, None, None).await;
 
-    let claims = result.expect("API call to get expense claims failed");
+    let claims = result.expect_xero("API call to get expense claims failed");
     // Demo company may not have these
     println!("Successfully retrieved {} expense claims.", claims.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_history_and_online_url_for_invoice() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -428,7 +476,7 @@ async fn get_history_and_online_url_for_invoice() {
             None,
         )
         .await
-        .expect("Failed to get invoices to test history");
+        .expect_xero("Failed to get invoices to test history");
     let invoice = invoices
         .first()
         .expect("No authorised ACCREC invoices found to test history/online URL");
@@ -436,11 +484,12 @@ async fn get_history_and_online_url_for_invoice() {
 
     // Test get_history
     let history_result = api.get_history("Invoices", invoice_id).await;
-    let history = history_result.expect("API call to get invoice history failed");
-    assert!(
-        !history.is_empty(),
-        "Expected to find at least one history record for the invoice."
-    );
+    let history = history_result.expect_xero("API call to get invoice history failed");
+    if history.is_empty() {
+        let path = format!("/Invoices/{invoice_id}/History");
+        log_raw_accounting_response(&test_client, &path, None).await;
+        panic!("Expected to find at least one history record for the invoice.");
+    }
     println!(
         "Successfully retrieved {} history records for invoice {}.",
         history.len(),
@@ -449,7 +498,7 @@ async fn get_history_and_online_url_for_invoice() {
 
     // Test get_online_invoice_url
     let online_url_result = api.get_online_invoice_url(invoice_id).await;
-    let online_invoice = online_url_result.expect("API call to get online invoice URL failed");
+    let online_invoice = online_url_result.expect_xero("API call to get online invoice URL failed");
     println!(
         "Successfully retrieved online invoice URL: {}",
         online_invoice.online_invoice_url
@@ -457,6 +506,7 @@ async fn get_history_and_online_url_for_invoice() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_journals() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -464,12 +514,20 @@ async fn get_journals() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_journals(None, None).await;
 
-    let journals = result.expect("API call to get journals failed");
-    assert!(!journals.is_empty(), "Expected to find journals.");
+    let journals = result.expect_xero("API call to get journals failed");
+    assert_non_empty_accounting(
+        &test_client,
+        &journals,
+        "Expected to find journals.",
+        "/Journals",
+        None,
+    )
+    .await;
     println!("Successfully retrieved {} journals.", journals.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_linked_transactions() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -479,7 +537,7 @@ async fn get_linked_transactions() {
         .get_linked_transactions(None, None, None, None, None, None)
         .await;
 
-    let transactions = result.expect("API call to get linked transactions failed");
+    let transactions = result.expect_xero("API call to get linked transactions failed");
     // Demo company may not have these
     println!(
         "Successfully retrieved {} linked transactions.",
@@ -488,6 +546,7 @@ async fn get_linked_transactions() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_organisation_actions() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -495,8 +554,15 @@ async fn get_organisation_actions() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_organisation_actions().await;
 
-    let actions = result.expect("API call to get organisation actions failed");
-    assert!(!actions.is_empty(), "Expected to find actions.");
+    let actions = result.expect_xero("API call to get organisation actions failed");
+    assert_non_empty_accounting(
+        &test_client,
+        &actions,
+        "Expected to find actions.",
+        "/Organisation/Actions",
+        None,
+    )
+    .await;
     println!(
         "Successfully retrieved {} organisation actions.",
         actions.len()
@@ -504,6 +570,7 @@ async fn get_organisation_actions() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_overpayments() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -511,7 +578,7 @@ async fn get_overpayments() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_overpayments(None, None, None, None, None).await;
 
-    let overpayments = result.expect("API call to get overpayments failed");
+    let overpayments = result.expect_xero("API call to get overpayments failed");
     // Demo company may not have these
     println!(
         "Successfully retrieved {} overpayments.",
@@ -520,6 +587,7 @@ async fn get_overpayments() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_payments() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -529,8 +597,15 @@ async fn get_payments() {
         .get_payments(None, None, None, None, Some(1), None)
         .await;
 
-    let payments = result.expect("API call to get payments failed");
-    assert!(!payments.is_empty(), "Expected to find payments.");
+    let payments = result.expect_xero("API call to get payments failed");
+    assert_non_empty_accounting(
+        &test_client,
+        &payments,
+        "Expected to find payments.",
+        "/Payments",
+        None,
+    )
+    .await;
     println!("Successfully retrieved {} payments.", payments.len());
 }
 
@@ -543,7 +618,7 @@ async fn get_payment_services() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_payment_services().await;
 
-    let services = result.expect("API call to get payment services failed");
+    let services = result.expect_xero("API call to get payment services failed");
     // Demo company may not have these
     println!(
         "Successfully retrieved {} payment services.",
@@ -552,6 +627,7 @@ async fn get_payment_services() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_prepayments() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -559,12 +635,13 @@ async fn get_prepayments() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_prepayments(None, None, None, None, None).await;
 
-    let prepayments = result.expect("API call to get prepayments failed");
+    let prepayments = result.expect_xero("API call to get prepayments failed");
     // Demo company may not have these
     println!("Successfully retrieved {} prepayments.", prepayments.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_quotes() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -576,12 +653,13 @@ async fn get_quotes() {
         )
         .await;
 
-    let quotes = result.expect("API call to get quotes failed");
+    let quotes = result.expect_xero("API call to get quotes failed");
     // Demo company may not have these
     println!("Successfully retrieved {} quotes.", quotes.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_receipts() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -589,13 +667,14 @@ async fn get_receipts() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_receipts(None, None, None, None).await;
 
-    let receipts = result.expect("API call to get receipts failed");
+    let receipts = result.expect_xero("API call to get receipts failed");
     // FIX: Don't assert that the list is not empty, as the demo company may not have any.
     // The test now passes if the API call is successful.
     println!("Successfully retrieved {} receipts.", receipts.len());
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_repeating_invoices() {
     let test_client = common::get_test_client().await;
     let api = test_client
@@ -603,8 +682,8 @@ async fn get_repeating_invoices() {
         .accounting_for_tenant(test_client.tenant_id);
     let result = api.get_repeating_invoices(None, None, None).await;
 
-    let invoices = result.expect("API call to get repeating invoices failed");
-    assert!(!invoices.is_empty(), "Expected to find repeating invoices.");
+    let invoices = result.expect_xero("API call to get repeating invoices failed");
+    // Demo or real companies may have zero repeating invoices.
     println!(
         "Successfully retrieved {} repeating invoices.",
         invoices.len()
@@ -614,6 +693,7 @@ async fn get_repeating_invoices() {
 // Note: CIS settings are UK-specific and may fail on other region's demo companies.
 // We will check for a specific error or success.
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_organisation_cis_settings() {
     let test_client = common::get_test_client().await;
     let api = test_client

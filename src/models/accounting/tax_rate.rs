@@ -1,4 +1,4 @@
-//! Model for the TaxRate resource.
+//! Model for the `TaxRate` resource.
 
 use serde::{Deserialize, Serialize};
 

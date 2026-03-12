@@ -20,17 +20,32 @@ pub struct Folder {
 #[serde(rename_all = "PascalCase")]
 pub struct User {
     pub name: String,
-    pub first_name: String,
-    pub last_name: String,
-    pub full_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_name: Option<String>,
     #[serde(rename = "Id")]
     pub id: Uuid,
 }
 
-// Wrapper for the response
+// Wrapper for the response (can be an object or a raw list).
 #[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub(crate) struct FoldersResponse {
-    #[serde(rename = "Items")]
-    pub folders: Vec<Folder>,
+#[serde(untagged)]
+pub(crate) enum FoldersResponse {
+    Wrapper {
+        #[serde(rename = "Items")]
+        folders: Vec<Folder>,
+    },
+    List(Vec<Folder>),
+}
+
+impl FoldersResponse {
+    pub fn into_vec(self) -> Vec<Folder> {
+        match self {
+            Self::Wrapper { folders } => folders,
+            Self::List(items) => items,
+        }
+    }
 }
