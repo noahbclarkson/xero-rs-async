@@ -212,6 +212,65 @@ impl XeroClient {
         })
     }
 
+    /// Creates a new `XeroClient` configured for the OAuth 2.0 PKCE flow.
+    ///
+    /// PKCE apps have no client secret. Use the [`crate::auth::TokenManager`]
+    /// PKCE helpers (`generate_pkce`, `get_authorization_url_pkce`,
+    /// `exchange_code_pkce`) to drive the authorization flow.
+    ///
+    /// # Arguments
+    ///
+    /// * `client_id` - Your Xero PKCE App's client ID.
+    /// * `redirect_uri` - The redirect URI configured in your Xero App.
+    /// * `rate_limiter` - An Arc-wrapped, shared `RateLimiter` instance.
+    pub async fn new_pkce(
+        client_id: String,
+        redirect_uri: String,
+        rate_limiter: Arc<RateLimiter>,
+    ) -> Result<Self, XeroError> {
+        debug!("Creating new XeroClient instance (PKCE).");
+        let http_client = Client::new();
+        let token_manager = Arc::new(TokenManager::new_pkce(
+            http_client.clone(),
+            client_id,
+            redirect_uri,
+        ));
+
+        info!("XeroClient created successfully (PKCE).");
+        Ok(Self {
+            http_client,
+            token_manager,
+            rate_limiter,
+        })
+    }
+
+    /// Creates a new PKCE `XeroClient` with an isolated `TokenManager` pre-seeded with the given token.
+    ///
+    /// Use this when you have already completed the PKCE flow elsewhere (e.g. via
+    /// `exchange_code_pkce_no_cache`) and want a per-job/per-tenant client.
+    pub async fn new_pkce_with_token(
+        client_id: String,
+        redirect_uri: String,
+        rate_limiter: Arc<RateLimiter>,
+        initial_token: TokenSet,
+    ) -> Result<Self, XeroError> {
+        debug!("Creating new XeroClient instance (PKCE) with pre-seeded token.");
+        let http_client = Client::new();
+        let token_manager = Arc::new(TokenManager::new_pkce(
+            http_client.clone(),
+            client_id,
+            redirect_uri,
+        ));
+        token_manager.set_token(&initial_token).await;
+
+        info!("XeroClient created successfully (PKCE) with pre-seeded token.");
+        Ok(Self {
+            http_client,
+            token_manager,
+            rate_limiter,
+        })
+    }
+
     /// Creates a new `XeroClient` with an isolated `TokenManager` pre-seeded with the given token.
     ///
     /// Unlike `new`, this constructor does not share a `TokenManager` with any other client.

@@ -6,18 +6,42 @@ use std::sync::Mutex;
 use tiny_http::{Response, Server};
 use url::Url;
 use uuid::Uuid;
+use xero_rs_async::auth::PkceCodes;
 use xero_rs_async::client::XeroClient;
+
+/// Selects which OAuth flow to run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Flow {
+    Code,
+    Pkce,
+}
 
 /// A utility to perform the interactive OAuth 2.0 authorization flow.
 /// It starts a temporary local web server to catch the redirect from Xero,
 /// exchanges the authorization code for a token set, saves it to a file,
 /// and then lists the tenants the app is connected to.
+///
+/// Set `XERO_AUTH_FLOW=pkce` to run the PKCE flow (no client secret required).
+/// The default is the standard authorization-code flow.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Load configuration from .env
     dotenvy::dotenv().expect("Failed to load .env file. Make sure it exists at the project root.");
+    let flow = match env::var("XERO_AUTH_FLOW")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "pkce" => Flow::Pkce,
+        "" | "code" | "authorization_code" => Flow::Code,
+        other => {
+            return Err(format!(
+                "Unknown XERO_AUTH_FLOW={other:?}. Use \"code\" (default) or \"pkce\"."
+            )
+            .into())
+        }
+    };
     let client_id = env::var("XERO_CLIENT_ID").expect("XERO_CLIENT_ID must be set.");
-    let client_secret = env::var("XERO_CLIENT_SECRET").expect("XERO_CLIENT_SECRET must be set.");
     let redirect_uri_str = env::var("XERO_REDIRECT_URI").expect("XERO_REDIRECT_URI must be set.");
 
     // 2. Initialize the RateLimiter and Xero Client
@@ -25,13 +49,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use xero_rs_async::rate_limiter::RateLimiter;
 
     let rate_limiter = Arc::new(RateLimiter::new().await?);
-    let xero_client = XeroClient::new(
-        client_id.clone(),
-        client_secret,
-        redirect_uri_str.clone(),
-        rate_limiter,
-    )
-    .await?;
+    let xero_client = match flow {
+        Flow::Code => {
+            let client_secret =
+                env::var("XERO_CLIENT_SECRET").expect("XERO_CLIENT_SECRET must be set.");
+            XeroClient::new(
+                client_id.clone(),
+                client_secret,
+                redirect_uri_str.clone(),
+                rate_limiter,
+            )
+            .await?
+        }
+        Flow::Pkce => {
+            XeroClient::new_pkce(client_id.clone(), redirect_uri_str.clone(), rate_limiter).await?
+        }
+    };
 
     // 3. Generate and display the authorization URL
     let scopes = [
@@ -51,11 +84,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "offline_access",
     ];
     let state = "12345";
-    let auth_url = xero_client
-        .token_manager
-        .get_authorization_url(&scopes, state);
 
-    println!("\n✅ Step 1: Your browser will now open for Xero authorization.");
+    // PKCE-only: generate verifier/challenge before building the URL.
+    let pkce_codes: Option<PkceCodes> = match flow {
+        Flow::Pkce => Some(xero_rs_async::auth::TokenManager::generate_pkce()),
+        Flow::Code => None,
+    };
+
+    let auth_url = match (&flow, &pkce_codes) {
+        (Flow::Code, _) => xero_client
+            .token_manager
+            .get_authorization_url(&scopes, state),
+        (Flow::Pkce, Some(codes)) => xero_client.token_manager.get_authorization_url_pkce(
+            &scopes,
+            state,
+            &codes.challenge,
+        ),
+        (Flow::Pkce, None) => unreachable!(),
+    };
+
+    println!(
+        "\n✅ Step 1: Your browser will now open for Xero authorization (flow: {:?}).",
+        flow
+    );
     println!("If it doesn't, please manually visit this URL:\n\n{auth_url}\n");
     webbrowser::open(&auth_url).expect("Failed to open web browser.");
 
@@ -68,7 +119,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "  - The redirect URI in your Xero app configuration exactly matches: {redirect_uri_str}"
     );
     println!("  - All the scopes requested are enabled for your Xero app");
-    println!("  - Your Xero app is set to 'Web App' type (not Public/Mobile)");
+    match flow {
+        Flow::Code => {
+            println!("  - Your Xero app is set to 'Auth Code' grant type (Web App)");
+        }
+        Flow::Pkce => {
+            println!("  - Your Xero app is set to 'Auth Code with PKCE' grant type");
+        }
+    }
 
     let received_params = Arc::new(Mutex::new(None));
     let received_params_clone = received_params.clone();
@@ -137,7 +195,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 6. Exchange the code for a token set
     println!("✅ Step 3: Exchanging code for tokens...");
-    match xero_client.token_manager.exchange_code(code).await {
+    let exchange_result = match (&flow, &pkce_codes) {
+        (Flow::Code, _) => xero_client.token_manager.exchange_code(code).await,
+        (Flow::Pkce, Some(codes)) => {
+            xero_client
+                .token_manager
+                .exchange_code_pkce(code, &codes.verifier)
+                .await
+        }
+        (Flow::Pkce, None) => unreachable!(),
+    };
+
+    match exchange_result {
         Ok(_) => {
             let token_path = save_token_to_file(&xero_client).await?;
             println!(
