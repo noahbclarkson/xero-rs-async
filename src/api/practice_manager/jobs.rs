@@ -4,7 +4,8 @@ use super::PracticeManagerApi;
 use crate::error::XeroError;
 use crate::models::practice_manager::custom_field::CustomFieldsResponse;
 use crate::models::practice_manager::job::{
-    CreateQuoteResponse, JobResponse, JobTasksResponse, JobsResponse,
+    CreateEstimateResponse, CreateQuoteResponse, JobCostsResponse, JobDocumentsResponse,
+    JobResponse, JobTasksResponse, JobsResponse,
 };
 use reqwest::Method;
 use uuid::Uuid;
@@ -198,7 +199,11 @@ impl<'a> JobsResource<'a> {
     }
 
     /// Returns a list of documents for a job.
-    pub async fn list_documents(&self, job_number: &str) -> Result<JobResponse, XeroError> {
+    ///
+    /// Read the list through [`JobDocumentsResponse::items`]. This returned [`JobResponse`] until
+    /// the shape was corrected, and a `Job` carries no documents, so every document the provider
+    /// sent was parsed away and the call answered successfully with nothing.
+    pub async fn list_documents(&self, job_number: &str) -> Result<JobDocumentsResponse, XeroError> {
         let path = format!("/job.api/documents/{job_number}");
         self.api
             .client
@@ -215,7 +220,11 @@ impl<'a> JobsResource<'a> {
     }
 
     /// Returns a list of costs for a job.
-    pub async fn list_costs(&self, job_number: &str) -> Result<JobResponse, XeroError> {
+    ///
+    /// Read the list through [`JobCostsResponse::items`]. This returned [`JobResponse`] until the
+    /// shape was corrected, and a `Job` carries no costs, so every cost the provider sent was
+    /// parsed away and the call answered successfully with an empty job.
+    pub async fn list_costs(&self, job_number: &str) -> Result<JobCostsResponse, XeroError> {
         let path = format!("/job.api/costs/{job_number}");
         self.api
             .client
@@ -276,11 +285,11 @@ impl<'a> JobsResource<'a> {
     pub async fn create_estimate(
         &self,
         job_number: &str,
-    ) -> Result<CreateQuoteResponse, XeroError> {
+    ) -> Result<CreateEstimateResponse, XeroError> {
         let path = format!("/job.api/createestimate/{job_number}");
         self.api
             .client
-            .send_request_xml::<CreateQuoteResponse>(Method::POST, &path, None)
+            .send_request_xml::<CreateEstimateResponse>(Method::POST, &path, None)
             .await
     }
 

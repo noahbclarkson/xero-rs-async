@@ -63,19 +63,99 @@ pub struct CreateEstimateResponse {
 }
 
 /// Response for `GET job.api/documents/[job number]`.
+///
+/// See [`JobCostsResponse`] for why this type names `<Response>` as its root and offers an
+/// accessor rather than a plain field: both types had the same defect and it had the same cause.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename = "Documents")]
+#[serde(rename = "Response")]
 pub struct JobDocumentsResponse {
+    #[serde(rename = "Status")]
+    pub status: String,
+    /// The list at the response root.
+    #[serde(rename = "Documents")]
+    pub documents: Option<JobDocumentList>,
+    /// The list nested inside the job it belongs to.
+    #[serde(rename = "Job")]
+    pub job: Option<JobDocumentsJob>,
+}
+
+/// Inner wrapper for `<Documents>`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JobDocumentList {
     #[serde(rename = "Document", default)]
     pub items: Vec<JobDocument>,
 }
 
-/// Response for `GET job.api/costs/[job number]`.
+/// The `<Job>` element a job-scoped documents response may nest its list inside.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename = "Costs")]
+pub struct JobDocumentsJob {
+    #[serde(rename = "Documents")]
+    pub documents: Option<JobDocumentList>,
+}
+
+impl JobDocumentsResponse {
+    /// The documents, from whichever nesting the provider used.
+    #[must_use]
+    pub fn items(&self) -> &[JobDocument] {
+        self.documents
+            .as_ref()
+            .or_else(|| self.job.as_ref().and_then(|job| job.documents.as_ref()))
+            .map_or(&[], |list| list.items.as_slice())
+    }
+}
+
+/// Response for `GET job.api/costs/[job number]`.
+///
+/// # Why this type is shaped the way it is
+///
+/// Every Practice Manager response is wrapped in `<Response>` carrying a `<Status>`, and this type
+/// used to declare `<Costs>` as its document root. It could therefore never have deserialised a
+/// real response -- and nothing noticed, because nothing was bound to it: `list_costs` returned
+/// [`JobResponse`], whose [`Job`] has no costs field at all, so the endpoint's entire payload was
+/// parsed away and discarded. The call appeared to succeed and returned a job with nothing on it.
+///
+/// The provider documents the endpoint but not its element nesting, and two shapes are plausible:
+/// `<Response><Costs>` and `<Response><Job><Costs>`. Both are accepted here. Read the list through
+/// [`JobCostsResponse::items`] rather than the fields, so a caller need not care which arrived.
+///
+/// **The nesting has not been confirmed against a live response.** It is inferred from the uniform
+/// envelope every other endpoint in this crate uses.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename = "Response")]
 pub struct JobCostsResponse {
+    #[serde(rename = "Status")]
+    pub status: String,
+    /// The list at the response root.
+    #[serde(rename = "Costs")]
+    pub costs: Option<JobCostList>,
+    /// The list nested inside the job it belongs to.
+    #[serde(rename = "Job")]
+    pub job: Option<JobCostsJob>,
+}
+
+/// Inner wrapper for `<Costs>`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JobCostList {
     #[serde(rename = "Cost", default)]
     pub items: Vec<JobCost>,
+}
+
+/// The `<Job>` element a job-scoped costs response may nest its list inside.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JobCostsJob {
+    #[serde(rename = "Costs")]
+    pub costs: Option<JobCostList>,
+}
+
+impl JobCostsResponse {
+    /// The costs, from whichever nesting the provider used.
+    #[must_use]
+    pub fn items(&self) -> &[JobCost] {
+        self.costs
+            .as_ref()
+            .or_else(|| self.job.as_ref().and_then(|job| job.costs.as_ref()))
+            .map_or(&[], |list| list.items.as_slice())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +358,15 @@ pub struct JobCost {
     pub unit_price: Option<String>,
     #[serde(rename = "Billable")]
     pub billable: Option<String>,
+    /// The line total. The provider returns it and this model did not declare it, so every caller
+    /// that wanted a cost's value had to multiply quantity by unit price and hope the provider had
+    /// not applied a markup of its own.
+    #[serde(rename = "Amount")]
+    pub amount: Option<String>,
+    #[serde(rename = "AmountTax")]
+    pub amount_tax: Option<String>,
+    #[serde(rename = "AmountIncludingTax")]
+    pub amount_including_tax: Option<String>,
 }
 
 /// A document linked to a job.
@@ -570,4 +659,54 @@ pub struct ApplyTemplateRequest {
     pub template_uuid: Uuid,
     #[serde(rename = "TaskMode", skip_serializing_if = "Option::is_none")]
     pub task_mode: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{JobCostsResponse, JobDocumentsResponse};
+
+    /// The provider does not document which of the two nestings it uses, so both are accepted and
+    /// `items()` hides the difference. These two tests are what stop a future tidy-up deleting one
+    /// branch on the assumption that the other is the only real one.
+    #[test]
+    fn costs_at_the_response_root_are_read() {
+        let xml = r"<Response><Status>OK</Status><Costs>
+            <Cost><UUID>0195a1f4-3b6b-7c11-9d64-2f0a4b6c8d10</UUID><Description>Courier</Description>
+            <Quantity>2</Quantity><UnitPrice>50.00</UnitPrice></Cost></Costs></Response>";
+        let parsed: JobCostsResponse = quick_xml::de::from_str(xml).expect("costs at the root");
+        assert_eq!(parsed.status, "OK");
+        assert_eq!(parsed.items().len(), 1);
+        assert_eq!(parsed.items()[0].description.as_deref(), Some("Courier"));
+    }
+
+    #[test]
+    fn costs_nested_under_the_job_are_read() {
+        let xml = r"<Response><Status>OK</Status><Job><ID>J000309</ID><Costs>
+            <Cost><Description>Courier</Description></Cost>
+            <Cost><Description>Filing fee</Description></Cost></Costs></Job></Response>";
+        let parsed: JobCostsResponse = quick_xml::de::from_str(xml).expect("costs under the job");
+        assert_eq!(parsed.items().len(), 2);
+        assert_eq!(parsed.items()[1].description.as_deref(), Some("Filing fee"));
+    }
+
+    #[test]
+    fn a_response_carrying_no_costs_reads_as_empty_rather_than_failing() {
+        let xml = r"<Response><Status>OK</Status></Response>";
+        let parsed: JobCostsResponse = quick_xml::de::from_str(xml).expect("an empty response");
+        assert!(parsed.items().is_empty());
+    }
+
+    #[test]
+    fn documents_are_read_from_either_nesting() {
+        let root = r"<Response><Status>OK</Status><Documents>
+            <Document><Title>Engagement letter</Title></Document></Documents></Response>";
+        let nested = r"<Response><Status>OK</Status><Job><Documents>
+            <Document><Title>Engagement letter</Title></Document></Documents></Job></Response>";
+        for xml in [root, nested] {
+            let parsed: JobDocumentsResponse =
+                quick_xml::de::from_str(xml).expect("a documents response");
+            assert_eq!(parsed.items().len(), 1);
+            assert_eq!(parsed.items()[0].title.as_deref(), Some("Engagement letter"));
+        }
+    }
 }
