@@ -31,14 +31,14 @@ impl<T> XeroTestResult<T> for Result<T, XeroError> {
                 match &err {
                     XeroError::Api { status, message } => {
                         error!("Xero API error status: {status}");
-                        error!("Xero raw response: {message}");
+                        error!("Xero response metadata: {message}");
                     }
                     XeroError::SerdeWithBody { body, .. } => {
-                        error!("Xero raw response: {body}");
+                        error!("Xero response metadata: {body}");
                     }
                     _ => {
                         error!("Xero error: {err}");
-                        error!("Xero raw response: <none - request failed before response>");
+                        error!("Xero response metadata: unavailable");
                     }
                 }
                 panic!("{context}: {err}");
@@ -51,31 +51,31 @@ const ACCOUNTING_BASE_URL: &str = "https://api.xero.com/api.xro/2.0";
 const ASSETS_BASE_URL: &str = "https://api.xero.com/assets.xro/1.0";
 const FILES_BASE_URL: &str = "https://api.xero.com/files.xro/1.0";
 
-pub async fn log_raw_accounting_response(
+pub async fn log_accounting_response_metadata(
     client: &TestClient,
     path: &str,
     query: Option<&[(String, String)]>,
 ) {
-    log_raw_response(client, ACCOUNTING_BASE_URL, path, query).await;
+    log_response_metadata(client, ACCOUNTING_BASE_URL, path, query).await;
 }
 
-pub async fn log_raw_assets_response(
+pub async fn log_assets_response_metadata(
     client: &TestClient,
     path: &str,
     query: Option<&[(String, String)]>,
 ) {
-    log_raw_response(client, ASSETS_BASE_URL, path, query).await;
+    log_response_metadata(client, ASSETS_BASE_URL, path, query).await;
 }
 
-pub async fn log_raw_files_response(
+pub async fn log_files_response_metadata(
     client: &TestClient,
     path: &str,
     query: Option<&[(String, String)]>,
 ) {
-    log_raw_response(client, FILES_BASE_URL, path, query).await;
+    log_response_metadata(client, FILES_BASE_URL, path, query).await;
 }
 
-async fn log_raw_response(
+async fn log_response_metadata(
     client: &TestClient,
     base_url: &str,
     path: &str,
@@ -84,7 +84,7 @@ async fn log_raw_response(
     let access_token = match client.client.token_manager.get_access_token().await {
         Ok(token) => token,
         Err(err) => {
-            error!("Failed to get access token for raw response logging: {err}");
+            error!("Failed to get access token for response metadata: {err}");
             return;
         }
     };
@@ -104,21 +104,18 @@ async fn log_raw_response(
     match request.send().await {
         Ok(response) => {
             let status = response.status();
-            match response.text().await {
-                Ok(body) => {
-                    eprintln!("\n=== RAW XERO RESPONSE ===");
-                    eprintln!("URL: {url}");
-                    eprintln!("Status: {status}");
-                    eprintln!("{body}");
-                    eprintln!("=== END RAW XERO RESPONSE ===\n");
-                }
-                Err(err) => {
-                    error!("Failed to read raw response body from {url}: {err}");
-                }
-            }
+            let content_length = response
+                .content_length()
+                .map_or_else(|| "unknown".to_string(), |length| length.to_string());
+            eprintln!("\n=== XERO RESPONSE METADATA ===");
+            eprintln!("URL: {url}");
+            eprintln!("Status: {status}");
+            eprintln!("Content length: {content_length}");
+            eprintln!("Response body: [REDACTED]");
+            eprintln!("=== END XERO RESPONSE METADATA ===\n");
         }
         Err(err) => {
-            error!("Failed to fetch raw response from {url}: {err}");
+            error!("Failed to fetch response metadata from {url}: {err}");
         }
     }
 }
@@ -131,7 +128,7 @@ pub async fn assert_non_empty_accounting<T>(
     query: Option<&[(String, String)]>,
 ) {
     if items.is_empty() {
-        log_raw_accounting_response(client, path, query).await;
+        log_accounting_response_metadata(client, path, query).await;
         panic!("{context}");
     }
 }
@@ -144,7 +141,7 @@ pub async fn assert_non_empty_assets<T>(
     query: Option<&[(String, String)]>,
 ) {
     if items.is_empty() {
-        log_raw_assets_response(client, path, query).await;
+        log_assets_response_metadata(client, path, query).await;
         panic!("{context}");
     }
 }
@@ -157,7 +154,7 @@ pub async fn assert_non_empty_files<T>(
     query: Option<&[(String, String)]>,
 ) {
     if items.is_empty() {
-        log_raw_files_response(client, path, query).await;
+        log_files_response_metadata(client, path, query).await;
         panic!("{context}");
     }
 }

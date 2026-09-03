@@ -3,14 +3,14 @@
 // tests/assets_get.rs
 
 mod common;
-use common::{assert_non_empty_assets, log_raw_assets_response, XeroTestResult};
+use common::{assert_non_empty_assets, log_assets_response_metadata, XeroTestResult};
 use xero_rs_async::models::assets::asset::AssetStatus;
 
-/// Debug test to fetch raw JSON response and diagnose serialization issues.
-/// Run with: cargo test -p xero-rs-async --test assets_get debug_raw_assets_response -- --nocapture
+/// Debug test to inspect response shape without printing provider data.
+/// Run with: cargo test -p xero-rs-async --test assets_get debug_assets_response_shape -- --nocapture
 #[tokio::test]
 #[ignore = "Requires Xero API credentials"]
-async fn debug_raw_assets_response() {
+async fn debug_assets_response_shape() {
     let test_client = common::get_test_client().await;
 
     // Get access token
@@ -21,7 +21,7 @@ async fn debug_raw_assets_response() {
         .await
         .expect_xero("Failed to get access token");
 
-    // Make raw request to see the JSON response
+    // Make a direct request so generic and typed parsing can be compared locally.
     let http_client = reqwest::Client::new();
     let response = http_client
         .get("https://api.xero.com/assets.xro/1.0/Assets")
@@ -36,47 +36,34 @@ async fn debug_raw_assets_response() {
     let status = response.status();
     let raw_json = response.text().await.expect("Failed to get response text");
 
-    println!("\n=== RAW ASSETS API RESPONSE ===");
+    println!("\n=== ASSETS API RESPONSE METADATA ===");
     println!("Status: {status}");
     println!("Response length: {} chars", raw_json.len());
-    println!("\n--- Full JSON Response ---");
-    println!("{raw_json}");
-    println!("--- End Response ---\n");
+    println!("Response body: [REDACTED]\n");
 
     // Try to parse it and show the specific error
     let parse_result: Result<serde_json::Value, _> = serde_json::from_str(&raw_json);
     match parse_result {
         Ok(value) => {
             println!("=== PARSED AS GENERIC JSON (SUCCESS) ===");
-            // Try to extract the items array and show the first item's structure
+            // Report only structural metadata, never provider values.
+            if let Some(object) = value.as_object() {
+                let mut keys: Vec<_> = object.keys().map(String::as_str).collect();
+                keys.sort_unstable();
+                println!("Top-level keys: {keys:?}");
+            }
             if let Some(items) = value.get("items").and_then(|v| v.as_array()) {
                 println!("Found {} items", items.len());
-                if let Some(first) = items.first() {
-                    println!("\n--- First item structure ---");
-                    println!("{}", serde_json::to_string_pretty(first).unwrap());
-
-                    // Check for bookDepreciationSetting fields
-                    if let Some(book_setting) = first.get("bookDepreciationSetting") {
-                        println!("\n--- bookDepreciationSetting ---");
-                        println!("{}", serde_json::to_string_pretty(book_setting).unwrap());
-
-                        // Specifically look at enum fields
-                        if let Some(method) = book_setting.get("depreciationMethod") {
-                            println!("\ndepreciationMethod value: {method}");
-                        }
-                        if let Some(avg) = book_setting.get("averagingMethod") {
-                            println!("averagingMethod value: {avg}");
-                        }
-                        if let Some(calc) = book_setting.get("depreciationCalculationMethod") {
-                            println!("depreciationCalculationMethod value: {calc}");
-                        }
-                    }
-                }
             }
         }
         Err(e) => {
             println!("=== FAILED TO PARSE AS GENERIC JSON ===");
-            println!("Error: {e}");
+            println!(
+                "Classification: {:?}; line={}; column={}",
+                e.classify(),
+                e.line(),
+                e.column()
+            );
         }
     }
 
@@ -100,43 +87,21 @@ async fn debug_raw_assets_response() {
     match model_result {
         Ok(resp) => {
             println!("SUCCESS! Parsed {} assets", resp.items.len());
-            for asset in &resp.items {
-                println!(
-                    "  - {} ({}): {:?}",
-                    asset.asset_name, asset.asset_number, asset.asset_status
-                );
-                if let Some(ref book) = asset.book_depreciation_setting {
-                    println!("    depreciation_method: {:?}", book.depreciation_method);
-                    println!("    averaging_method: {:?}", book.averaging_method);
-                    println!(
-                        "    calculation_method: {:?}",
-                        book.depreciation_calculation_method
-                    );
-                }
-            }
         }
         Err(e) => {
             println!("FAILED to parse with Asset model!");
-            println!("Error: {e}");
-            println!("\nError column {} - let's see what's there:", e.column());
-
-            // Show context around the error position
-            let col = e.column().saturating_sub(1);
-            let start = col.saturating_sub(50);
-            let end = (col + 50).min(raw_json.len());
-            if start < raw_json.len() {
-                println!(
-                    "Context around column {}: ...{}...",
-                    col,
-                    &raw_json[start..end]
-                );
-            }
+            println!(
+                "Classification: {:?}; line={}; column={}",
+                e.classify(),
+                e.line(),
+                e.column()
+            );
         }
     }
 
     // The test passes regardless - it's for debugging
     if !status.is_success() {
-        log_raw_assets_response(&test_client, "/Assets", None).await;
+        log_assets_response_metadata(&test_client, "/Assets", None).await;
         panic!("API call failed with status {status}");
     }
 }
@@ -150,7 +115,7 @@ async fn get_asset_settings() {
 
     let settings = result.expect_xero("API call to get asset settings failed");
     if settings.asset_number_prefix.is_empty() {
-        log_raw_assets_response(&test_client, "/Settings", None).await;
+        log_assets_response_metadata(&test_client, "/Settings", None).await;
         panic!("Asset number prefix should not be empty.");
     }
     println!(

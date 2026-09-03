@@ -1,16 +1,17 @@
 //! Shared HTTP client utilities for Xero APIs.
 
 use crate::auth::{TokenManager, TokenSet};
-use crate::error::XeroError;
+use crate::error::{redacted_json_decode_error, redacted_response_metadata, XeroError};
 use crate::rate_limiter::RateLimiter;
 use log::{debug, error, trace};
 use reqwest::{multipart::Form, Client, Method, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::fmt;
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct ApiClient {
     base_url: String,
     tenant_id: Uuid,
@@ -18,6 +19,18 @@ pub(crate) struct ApiClient {
     token_manager: Arc<TokenManager>,
     rate_limiter: Arc<RateLimiter>,
     token_override: Option<Arc<TokenSet>>,
+}
+
+impl fmt::Debug for ApiClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ApiClient")
+            .field("base_url", &self.base_url)
+            .field("tenant_id", &self.tenant_id)
+            .field("token_manager", &self.token_manager)
+            .field("rate_limiter", &self.rate_limiter)
+            .field("token_override", &self.token_override.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ApiClient {
@@ -66,7 +79,10 @@ impl ApiClient {
         accept_json: bool,
     ) -> Result<(String, RequestBuilder), XeroError> {
         let url = self.url(path);
-        debug!("Sending API request: {} {}", method, url);
+        // Query values and provider object names can contain client information.
+        // Log only the bounded path shape; request metadata is correlated from
+        // response headers on failure.
+        debug!("Sending API request: {} {}", method, path);
         let access_token = self.access_token().await?;
 
         let mut builder = self
@@ -97,23 +113,22 @@ impl ApiClient {
             Ok(response)
         } else {
             let status = response.status();
-            let message = response.text().await?;
+            let message = redacted_response_metadata(&response);
             Err(XeroError::Api { status, message })
         }
     }
 
-    fn deserialize_json<R>(&self, url: &str, response_text: &str) -> Result<R, XeroError>
+    fn deserialize_json<R>(
+        &self,
+        response_metadata: &str,
+        response_text: &str,
+    ) -> Result<R, XeroError>
     where
         R: DeserializeOwned,
     {
         let trimmed = response_text.trim();
-        serde_json::from_str::<R>(trimmed).map_err(|e| {
-            error!("Failed to deserialize JSON response from {url}: {e}");
-            error!("Raw JSON response that failed to parse:\n---\n{trimmed}\n---");
-            XeroError::SerdeWithBody {
-                source: e,
-                body: response_text.to_string(),
-            }
+        serde_json::from_str::<R>(trimmed).map_err(|error| {
+            redacted_json_decode_error(&error, response_text.len(), response_metadata)
         })
     }
 
@@ -128,9 +143,12 @@ impl ApiClient {
         R: DeserializeOwned,
         B: Serialize,
     {
-        let (url, mut builder) = self.build_request(method, path, true).await?;
+        let (_url, mut builder) = self.build_request(method, path, true).await?;
         if let Some(q) = &query {
-            trace!("Request query: {q:?}");
+            trace!(
+                "Request has {} query parameter(s); values redacted",
+                q.len()
+            );
             builder = builder.query(q);
         }
         if let Some(b) = body {
@@ -139,8 +157,9 @@ impl ApiClient {
         }
 
         let response = self.send_expect_success(builder).await?;
+        let response_metadata = redacted_response_metadata(&response);
         let response_text = response.text().await?;
-        self.deserialize_json(&url, &response_text)
+        self.deserialize_json(&response_metadata, &response_text)
     }
 
     /// Like `send_request` but adds an `If-Modified-Since` header.
@@ -157,9 +176,12 @@ impl ApiClient {
     where
         R: DeserializeOwned,
     {
-        let (url, mut builder) = self.build_request(method, path, true).await?;
+        let (_url, mut builder) = self.build_request(method, path, true).await?;
         if let Some(q) = &query {
-            trace!("Request query: {q:?}");
+            trace!(
+                "Request has {} query parameter(s); values redacted",
+                q.len()
+            );
             builder = builder.query(q);
         }
         let header_value = if_modified_since
@@ -169,8 +191,9 @@ impl ApiClient {
         builder = builder.header("If-Modified-Since", header_value);
 
         let response = self.send_expect_success(builder).await?;
+        let response_metadata = redacted_response_metadata(&response);
         let response_text = response.text().await?;
-        self.deserialize_json(&url, &response_text)
+        self.deserialize_json(&response_metadata, &response_text)
     }
 
     pub(crate) async fn send_request_text(
@@ -181,7 +204,10 @@ impl ApiClient {
     ) -> Result<String, XeroError> {
         let (_url, mut builder) = self.build_request(method, path, true).await?;
         if let Some(q) = &query {
-            trace!("Request query: {q:?}");
+            trace!(
+                "Request has {} query parameter(s); values redacted",
+                q.len()
+            );
             builder = builder.query(q);
         }
 
@@ -218,12 +244,13 @@ impl ApiClient {
         R: DeserializeOwned,
         B: Into<reqwest::Body>,
     {
-        let (url, builder) = self.build_request(method, path, true).await?;
+        let (_url, builder) = self.build_request(method, path, true).await?;
         let builder = builder.header("Content-Type", content_type).body(body);
 
         let response = self.send_expect_success(builder).await?;
+        let response_metadata = redacted_response_metadata(&response);
         let response_text = response.text().await?;
-        self.deserialize_json(&url, &response_text)
+        self.deserialize_json(&response_metadata, &response_text)
     }
 
     pub(crate) async fn send_request_bytes(
@@ -251,19 +278,24 @@ impl ApiClient {
     where
         R: DeserializeOwned,
     {
-        let (url, builder) = self.build_request(method, path, true).await?;
+        let (_url, builder) = self.build_request(method, path, true).await?;
         let builder = builder.multipart(form);
 
         let response = self.send_expect_success(builder).await?;
+        let response_metadata = redacted_response_metadata(&response);
         let response_text = response.text().await?;
-        self.deserialize_json(&url, &response_text)
+        self.deserialize_json(&response_metadata, &response_text)
     }
 
     // ── XML helpers (Practice Manager / XPM) ─────────────────────────
 
     /// Deserialize an XPM XML response, checking for the `<Status>ERROR</Status>` envelope first.
     #[allow(dead_code)]
-    fn deserialize_xml<R>(&self, url: &str, response_text: &str) -> Result<R, XeroError>
+    fn deserialize_xml<R>(
+        &self,
+        response_metadata: &str,
+        response_text: &str,
+    ) -> Result<R, XeroError>
     where
         R: DeserializeOwned,
     {
@@ -271,18 +303,26 @@ impl ApiClient {
 
         // Check for XPM error envelope
         if trimmed.contains("<Status>ERROR</Status>") {
-            let description = extract_xml_tag(trimmed, "ErrorDescription")
-                .unwrap_or_else(|| "Unknown XPM error".to_string());
             return Err(XeroError::Api {
                 status: reqwest::StatusCode::BAD_REQUEST,
-                message: description,
+                message: format!(
+                    "XPM response reported an error; response_bytes={}; {response_metadata}",
+                    response_text.len()
+                ),
             });
         }
 
         quick_xml::de::from_str::<R>(trimmed).map_err(|e| {
-            error!("Failed to deserialize XML response from {url}: {e}");
-            error!("Raw XML response that failed to parse:\n---\n{trimmed}\n---");
-            XeroError::Xml(e)
+            let classification = xml_error_classification(&e);
+            let diagnostic = format!(
+                "format=xml; classification={classification}; response_bytes={}; \
+                 {response_metadata}",
+                response_text.len()
+            );
+            error!("Failed to deserialize provider response: {diagnostic}");
+            XeroError::Xml(quick_xml::DeError::Custom(format!(
+                "provider XML did not match the expected response schema; {diagnostic}"
+            )))
         })
     }
 
@@ -297,15 +337,19 @@ impl ApiClient {
     where
         R: DeserializeOwned,
     {
-        let (url, mut builder) = self.build_request(method, path, false).await?;
+        let (_url, mut builder) = self.build_request(method, path, false).await?;
         if let Some(q) = &query {
-            trace!("Request query: {q:?}");
+            trace!(
+                "Request has {} query parameter(s); values redacted",
+                q.len()
+            );
             builder = builder.query(q);
         }
 
         let response = self.send_expect_success(builder).await?;
+        let response_metadata = redacted_response_metadata(&response);
         let response_text = response.text().await?;
-        self.deserialize_xml(&url, &response_text)
+        self.deserialize_xml(&response_metadata, &response_text)
     }
 
     /// Send a request with an XML body, expecting an XML response.
@@ -319,14 +363,15 @@ impl ApiClient {
     where
         R: DeserializeOwned,
     {
-        let (url, builder) = self.build_request(method, path, false).await?;
+        let (_url, builder) = self.build_request(method, path, false).await?;
         let builder = builder
             .header("Content-Type", "text/xml")
             .body(xml_body.to_string());
 
         let response = self.send_expect_success(builder).await?;
+        let response_metadata = redacted_response_metadata(&response);
         let response_text = response.text().await?;
-        self.deserialize_xml(&url, &response_text)
+        self.deserialize_xml(&response_metadata, &response_text)
     }
 
     /// Send a request with an optional XML body, expecting only a success status (no body to parse).
@@ -345,16 +390,18 @@ impl ApiClient {
         }
 
         let response = self.send_expect_success(builder).await?;
+        let response_metadata = redacted_response_metadata(&response);
         let response_text = response.text().await?;
         let trimmed = response_text.trim();
 
         // Still check for XPM error envelope even on "empty" responses
         if trimmed.contains("<Status>ERROR</Status>") {
-            let description = extract_xml_tag(trimmed, "ErrorDescription")
-                .unwrap_or_else(|| "Unknown XPM error".to_string());
             return Err(XeroError::Api {
                 status: reqwest::StatusCode::BAD_REQUEST,
-                message: description,
+                message: format!(
+                    "XPM response reported an error; response_bytes={}; {response_metadata}",
+                    response_text.len()
+                ),
             });
         }
 
@@ -362,12 +409,12 @@ impl ApiClient {
     }
 }
 
-/// Extract the text content of a simple XML tag (no attributes, no nesting).
-#[allow(dead_code)]
-fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
-    let start = xml.find(&open)? + open.len();
-    let end = xml[start..].find(&close)? + start;
-    Some(xml[start..end].to_string())
+fn xml_error_classification(error: &quick_xml::DeError) -> &'static str {
+    match error {
+        quick_xml::DeError::Custom(_) => "data",
+        quick_xml::DeError::InvalidXml(_) => "syntax",
+        quick_xml::DeError::KeyNotRead => "deserializer-state",
+        quick_xml::DeError::UnexpectedStart(_) => "unexpected-start",
+        quick_xml::DeError::UnexpectedEof => "unexpected-eof",
+    }
 }

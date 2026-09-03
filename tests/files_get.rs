@@ -3,7 +3,7 @@
 // tests/files_get.rs
 
 mod common;
-use common::{log_raw_accounting_response, log_raw_files_response, XeroTestResult};
+use common::{log_accounting_response_metadata, log_files_response_metadata, XeroTestResult};
 
 #[tokio::test]
 async fn get_folders_and_by_id() {
@@ -14,7 +14,7 @@ async fn get_folders_and_by_id() {
     let folders = result.expect_xero("API call to get folders failed");
 
     if !folders.iter().any(|f| f.name == "Inbox") {
-        log_raw_files_response(&test_client, "/Folders", None).await;
+        log_files_response_metadata(&test_client, "/Folders", None).await;
         panic!("Expected to find the default 'Inbox' folder.");
     }
     println!("Successfully retrieved {} folders.", folders.len());
@@ -23,7 +23,7 @@ async fn get_folders_and_by_id() {
     let inbox_folder = match folders.iter().find(|f| f.name == "Inbox") {
         Some(folder) => folder,
         None => {
-            log_raw_files_response(&test_client, "/Folders", None).await;
+            log_files_response_metadata(&test_client, "/Folders", None).await;
             panic!("Inbox folder not found");
         }
     };
@@ -106,7 +106,7 @@ async fn get_associations() {
         .await
         .expect_xero("Failed to get invoices to test associations");
     if invoices.is_empty() {
-        log_raw_accounting_response(&test_client, "/Invoices", None).await;
+        log_accounting_response_metadata(&test_client, "/Invoices", None).await;
     }
 
     if let Some(invoice) = invoices.first() {
@@ -137,7 +137,7 @@ async fn get_associations() {
                 file_assoc_result.expect_xero("Failed to get file associations");
             if file_associations.is_empty() {
                 let path = format!("/Files/{file_id}/Associations");
-                log_raw_files_response(&test_client, &path, None).await;
+                log_files_response_metadata(&test_client, &path, None).await;
                 panic!("Expected file associations for file {file_id}");
             }
             println!(
