@@ -83,7 +83,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "accounting.budgets.read",
         "offline_access",
     ];
-    let state = "12345";
+    // Bind this one callback to an unpredictable state value. This utility is local-only, but a
+    // fixed state would still make its authorization callback vulnerable to login CSRF.
+    let state = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
 
     // PKCE-only: generate verifier/challenge before building the URL.
     let pkce_codes: Option<PkceCodes> = match flow {
@@ -94,12 +96,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auth_url = match (&flow, &pkce_codes) {
         (Flow::Code, _) => xero_client
             .token_manager
-            .get_authorization_url(&scopes, state),
-        (Flow::Pkce, Some(codes)) => xero_client.token_manager.get_authorization_url_pkce(
-            &scopes,
-            state,
-            &codes.challenge,
-        ),
+            .get_authorization_url(&scopes, &state),
+        (Flow::Pkce, Some(codes)) => {
+            xero_client
+                .token_manager
+                .get_authorization_url_pkce(&scopes, &state, &codes.challenge)
+        }
         (Flow::Pkce, None) => unreachable!(),
     };
 
@@ -187,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get("state")
         .ok_or("State not found in callback URL")?;
 
-    if received_state != state {
+    if received_state != &state {
         return Err("State mismatch! CSRF attack may be in progress.".into());
     }
 
@@ -268,7 +270,22 @@ async fn fetch_and_display_connections(
         .await?;
 
     if response.status().is_success() {
-        let connections: Vec<Connection> = response.json().await?;
+        let response_text = response.text().await?;
+        let connections: Vec<Connection> =
+            serde_json::from_str(response_text.trim()).map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "connections response JSON did not match the expected schema; \
+                         classification={:?}; line={}; column={}; response_bytes={}; \
+                         endpoint=/connections; response_body=redacted",
+                        error.classify(),
+                        error.line(),
+                        error.column(),
+                        response_text.len()
+                    ),
+                )
+            })?;
         if connections.is_empty() {
             println!("No tenants are currently connected to this app.");
         } else {
@@ -288,10 +305,9 @@ async fn fetch_and_display_connections(
             println!("\n💡 Tip: Copy a Tenant ID from the list above and set it as `XERO_TENANT_ID` in your .env file to run tests against that organization.");
         }
     } else {
+        let status = response.status();
         eprintln!(
-            "❌ Error fetching connections: {} - {}",
-            response.status(),
-            response.text().await?
+            "❌ Error fetching connections: {status}; endpoint=/connections; response_body=redacted"
         );
     }
     Ok(())

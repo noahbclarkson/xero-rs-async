@@ -1,7 +1,7 @@
 // tests/accounting_get.rs
 
 mod common;
-use common::{assert_non_empty_accounting, log_raw_accounting_response, XeroTestResult};
+use common::{assert_non_empty_accounting, log_accounting_response_metadata, XeroTestResult};
 use xero_rs_async::models::accounting::invoice::InvoiceType;
 
 #[tokio::test]
@@ -154,7 +154,7 @@ async fn get_branding_themes() {
 
     let themes = result.expect_xero("API call to get branding themes failed");
     if !themes.iter().any(|t| t.name.as_deref() == Some("Standard")) {
-        log_raw_accounting_response(&test_client, "/BrandingThemes", None).await;
+        log_accounting_response_metadata(&test_client, "/BrandingThemes", None).await;
         panic!("Expected to find the 'Standard' branding theme.");
     }
     println!("Successfully retrieved {} branding themes.", themes.len());
@@ -193,7 +193,7 @@ async fn get_report_balance_sheet() {
     let report = result.expect_xero("API call to get BalanceSheet failed");
     assert_eq!(report.report_id.as_deref(), Some("BalanceSheet"));
     if report.rows.is_empty() {
-        log_raw_accounting_response(&test_client, "/Reports/BalanceSheet", None).await;
+        log_accounting_response_metadata(&test_client, "/Reports/BalanceSheet", None).await;
         panic!("Balance sheet report should not be empty.");
     }
     println!(
@@ -487,7 +487,7 @@ async fn get_history_and_online_url_for_invoice() {
     let history = history_result.expect_xero("API call to get invoice history failed");
     if history.is_empty() {
         let path = format!("/Invoices/{invoice_id}/History");
-        log_raw_accounting_response(&test_client, &path, None).await;
+        log_accounting_response_metadata(&test_client, &path, None).await;
         panic!("Expected to find at least one history record for the invoice.");
     }
     println!(

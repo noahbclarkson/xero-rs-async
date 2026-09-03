@@ -19,12 +19,13 @@ use crate::auth::{TokenManager, TokenSet};
 use crate::endpoints::assets::AssetsApi;
 #[cfg(feature = "files")]
 use crate::endpoints::files::FilesApi;
-use crate::error::XeroError;
+use crate::error::{redacted_json_decode_error, redacted_response_metadata, XeroError};
 use crate::rate_limiter::RateLimiter;
 
 use log::{debug, info};
 use reqwest::Client;
 use serde::Deserialize;
+use std::fmt;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -39,19 +40,38 @@ pub struct Connection {
 }
 
 /// The main client for interacting with all Xero APIs.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct XeroClient {
     pub(crate) http_client: Client,
     pub token_manager: Arc<TokenManager>,
     pub(crate) rate_limiter: Arc<RateLimiter>,
 }
 
+impl fmt::Debug for XeroClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("XeroClient")
+            .field("token_manager", &self.token_manager)
+            .field("rate_limiter", &self.rate_limiter)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A tenant-bound client that vends API handles without requiring tenant IDs per call.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TenantClient {
     client: XeroClient,
     tenant_id: Uuid,
     token_override: Option<Arc<TokenSet>>,
+}
+
+impl fmt::Debug for TenantClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TenantClient")
+            .field("client", &self.client)
+            .field("tenant_id", &self.tenant_id)
+            .field("token_override", &self.token_override.is_some())
+            .finish()
+    }
 }
 
 impl TenantClient {
@@ -329,10 +349,14 @@ impl XeroClient {
             .await?;
 
         if response.status().is_success() {
-            Ok(response.json::<Vec<Connection>>().await?)
+            let response_metadata = redacted_response_metadata(&response);
+            let response_text = response.text().await?;
+            serde_json::from_str(response_text.trim()).map_err(|error| {
+                redacted_json_decode_error(&error, response_text.len(), &response_metadata)
+            })
         } else {
             let status = response.status();
-            let message = response.text().await?;
+            let message = redacted_response_metadata(&response);
             Err(XeroError::Api { status, message })
         }
     }

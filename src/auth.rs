@@ -9,21 +9,31 @@
 //!   authorize redirect, and presents the verifier when exchanging the code.
 //!   Construct with [`TokenManager::new_pkce`].
 
-use crate::error::XeroError;
+use crate::error::{redacted_json_decode_error, redacted_response_metadata, XeroError};
 use base64::Engine;
 use log::{debug, info, trace, warn};
 use rand::RngExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use zeroize::Zeroize;
 
 const AUTHORIZE_URL: &str = "https://login.xero.com/identity/connect/authorize";
 const TOKEN_URL: &str = "https://identity.xero.com/connect/token";
 const REVOCATION_URL: &str = "https://identity.xero.com/connect/revocation";
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+async fn deserialize_token_response(response: reqwest::Response) -> Result<TokenSet, XeroError> {
+    let response_metadata = redacted_response_metadata(&response);
+    let response_text = response.text().await?;
+    serde_json::from_str(response_text.trim()).map_err(|error| {
+        redacted_json_decode_error(&error, response_text.len(), &response_metadata)
+    })
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct TokenSet {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -32,6 +42,30 @@ pub struct TokenSet {
     pub token_type: String,
     #[serde(default = "chrono::Utc::now")]
     pub obtained_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl fmt::Debug for TokenSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenSet")
+            .field("access_token", &"[REDACTED]")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("id_token", &self.id_token.as_ref().map(|_| "[REDACTED]"))
+            .field("expires_in", &self.expires_in)
+            .field("token_type", &self.token_type)
+            .field("obtained_at", &self.obtained_at)
+            .finish()
+    }
+}
+
+impl Drop for TokenSet {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+        self.id_token.zeroize();
+    }
 }
 
 impl TokenSet {
@@ -45,7 +79,7 @@ impl TokenSet {
 }
 
 /// Selects how the [`TokenManager`] authenticates against the token endpoint.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum AuthMode {
     /// Standard authorization code flow with a client secret.
     Code { client_secret: String },
@@ -53,12 +87,32 @@ enum AuthMode {
     Pkce,
 }
 
+impl fmt::Debug for AuthMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Code { .. } => f
+                .debug_struct("Code")
+                .field("client_secret", &"[REDACTED]")
+                .finish(),
+            Self::Pkce => f.write_str("Pkce"),
+        }
+    }
+}
+
+impl Drop for AuthMode {
+    fn drop(&mut self) {
+        if let Self::Code { client_secret } = self {
+            client_secret.zeroize();
+        }
+    }
+}
+
 /// A PKCE code verifier paired with its derived `S256` challenge.
 ///
 /// The caller is responsible for storing the `verifier` between the authorize
 /// redirect and the token exchange (typically alongside the `state` value in a
 /// signed cookie or session store). The library does not retain it.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PkceCodes {
     /// Random 43–128 char string in `[A-Z a-z 0-9 -._~]`. Keep this secret.
     pub verifier: String,
@@ -66,14 +120,39 @@ pub struct PkceCodes {
     pub challenge: String,
 }
 
+impl fmt::Debug for PkceCodes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PkceCodes")
+            .field("verifier", &"[REDACTED]")
+            .field("challenge", &self.challenge)
+            .finish()
+    }
+}
+
+impl Drop for PkceCodes {
+    fn drop(&mut self) {
+        self.verifier.zeroize();
+    }
+}
+
 /// Manages OAuth 2.0 tokens, including fetching, caching, and refreshing.
-#[derive(Debug)]
 pub struct TokenManager {
     http_client: Client,
     client_id: String,
     redirect_uri: String,
     auth_mode: AuthMode,
     cached_token: Arc<Mutex<Option<TokenSet>>>,
+}
+
+impl fmt::Debug for TokenManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenManager")
+            .field("client_id", &"[REDACTED]")
+            .field("redirect_uri", &self.redirect_uri)
+            .field("auth_mode", &self.auth_mode)
+            .field("cached_token", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 impl TokenManager {
@@ -190,10 +269,7 @@ impl TokenManager {
 
     /// Builds a POST request to the token endpoint with the right auth shape
     /// for this manager's mode. For PKCE, `client_id` is appended to `params`.
-    fn token_request<'a>(
-        &'a self,
-        mut params: Vec<(&'a str, &'a str)>,
-    ) -> reqwest::RequestBuilder {
+    fn token_request<'a>(&'a self, mut params: Vec<(&'a str, &'a str)>) -> reqwest::RequestBuilder {
         let req = self.http_client.post(TOKEN_URL);
         match &self.auth_mode {
             AuthMode::Code { client_secret } => req
@@ -224,7 +300,7 @@ impl TokenManager {
         let response = self.token_request(params).send().await?;
 
         if response.status().is_success() {
-            let token_set = response.json::<TokenSet>().await?;
+            let token_set = deserialize_token_response(response).await?;
             if persist_cache {
                 info!("Successfully exchanged code for token set. Saving to in-memory cache.");
                 self.save_token(&token_set).await;
@@ -234,9 +310,9 @@ impl TokenManager {
             Ok(token_set)
         } else {
             let status = response.status();
-            let message = response.text().await?;
+            let metadata = redacted_response_metadata(&response);
             Err(XeroError::Auth(format!(
-                "Failed to exchange code: {status} - {message}"
+                "Failed to exchange code: {status}; {metadata}"
             )))
         }
     }
@@ -318,11 +394,11 @@ impl TokenManager {
             .as_ref()
             .ok_or_else(|| XeroError::Auth("No refresh token available".to_string()))?;
 
-        let backoff_ms = [500u64, 1000];
-        let max_attempts: usize = 3;
+        let attempts = [Some(500u64), Some(1000), None];
+        let max_attempts = attempts.len();
         let mut last_err: Option<XeroError> = None;
 
-        for attempt in 0..max_attempts {
+        for (attempt, retry_delay_ms) in attempts.into_iter().enumerate() {
             let params = vec![
                 ("grant_type", "refresh_token"),
                 ("refresh_token", refresh_token.as_str()),
@@ -332,7 +408,7 @@ impl TokenManager {
             match result {
                 Ok(response) => {
                     if response.status().is_success() {
-                        let new_token_set = response.json::<TokenSet>().await?;
+                        let new_token_set = deserialize_token_response(response).await?;
                         if persist_cache {
                             info!("Successfully refreshed token set. Saving to in-memory cache.");
                             self.save_token(&new_token_set).await;
@@ -345,20 +421,20 @@ impl TokenManager {
                     // Non-success HTTP response – do NOT retry 4xx errors as they
                     // indicate a permanent problem (bad token, revoked grant, etc.).
                     let status = response.status();
-                    let message = response.text().await?;
+                    let metadata = redacted_response_metadata(&response);
                     if status.is_client_error() {
                         return Err(XeroError::Auth(format!(
-                            "Failed to refresh token: {status} - {message}"
+                            "Failed to refresh token: {status}; {metadata}"
                         )));
                     }
                     // 5xx or other server-side errors are transient – retry.
                     warn!(
-                        "Token refresh attempt {}/{} got server error {status}: {message}",
+                        "Token refresh attempt {}/{} got server error {status}; {metadata}",
                         attempt + 1,
                         max_attempts
                     );
                     last_err = Some(XeroError::Auth(format!(
-                        "Failed to refresh token: {status} - {message}"
+                        "Failed to refresh token: {status}; {metadata}"
                     )));
                 }
                 Err(e) => {
@@ -373,8 +449,7 @@ impl TokenManager {
             }
 
             // Sleep before the next retry (skip sleep after the last attempt).
-            if attempt < max_attempts - 1 {
-                let delay = backoff_ms[attempt];
+            if let Some(delay) = retry_delay_ms {
                 debug!("Retrying token refresh in {delay}ms");
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
             }
@@ -422,9 +497,9 @@ impl TokenManager {
             Ok(())
         } else {
             let status = response.status();
-            let message = response.text().await?;
+            let metadata = redacted_response_metadata(&response);
             Err(XeroError::Auth(format!(
-                "Failed to revoke token: {status} - {message}"
+                "Failed to revoke token: {status}; {metadata}"
             )))
         }
     }
@@ -445,7 +520,7 @@ impl TokenManager {
             debug!("Access token is still valid.");
         }
 
-        Ok(token_set.access_token)
+        Ok(token_set.access_token.clone())
     }
 
     /// Saves the token set to the in-memory cache.
@@ -509,7 +584,10 @@ mod tests {
         }
 
         // Challenge must be the deterministic SHA256/base64url of the verifier.
-        assert_eq!(codes.challenge, TokenManager::challenge_for(&codes.verifier));
+        assert_eq!(
+            codes.challenge,
+            TokenManager::challenge_for(&codes.verifier)
+        );
     }
 
     #[test]
