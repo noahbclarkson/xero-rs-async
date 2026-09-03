@@ -10,6 +10,37 @@ use serde::Serialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Which representation a request will accept back.
+///
+/// Xero enforces strict content negotiation on the Practice Manager 3.1 API from
+/// 3 September 2026: the API honours `Accept` instead of defaulting to XML, and a request
+/// that names no format it can serve is answered `406 Not Acceptable`. Every XPM call in
+/// this crate parses XML, so every XPM call has to ask for it by name — relying on the old
+/// default is what broke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Accept {
+    /// `application/json` — Accounting, Payroll, Assets, Projects, Files.
+    Json,
+    /// XML — Practice Manager (XPM). Both spellings are offered because XPM answers with
+    /// `text/xml` while `application/xml` is the registered type, and naming only one of
+    /// them stakes the whole integration on which one the server prefers.
+    Xml,
+    /// No `Accept` header, preserving the pre-negotiation behaviour for the two callers
+    /// that never parse the body: an attachment download that streams opaque bytes, and
+    /// the Accounting/Payroll writes that discard the response entirely.
+    Unset,
+}
+
+impl Accept {
+    const fn header_value(self) -> Option<&'static str> {
+        match self {
+            Self::Json => Some("application/json"),
+            Self::Xml => Some("application/xml, text/xml"),
+            Self::Unset => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ApiClient {
     base_url: String,
@@ -63,7 +94,7 @@ impl ApiClient {
         &self,
         method: Method,
         path: &str,
-        accept_json: bool,
+        accept: Accept,
     ) -> Result<(String, RequestBuilder), XeroError> {
         let url = self.url(path);
         debug!("Sending API request: {} {}", method, url);
@@ -75,8 +106,8 @@ impl ApiClient {
             .bearer_auth(access_token)
             .header("xero-tenant-id", self.tenant_id.to_string());
 
-        if accept_json {
-            builder = builder.header("Accept", "application/json");
+        if let Some(value) = accept.header_value() {
+            builder = builder.header("Accept", value);
         }
 
         Ok((url, builder))
@@ -128,7 +159,7 @@ impl ApiClient {
         R: DeserializeOwned,
         B: Serialize,
     {
-        let (url, mut builder) = self.build_request(method, path, true).await?;
+        let (url, mut builder) = self.build_request(method, path, Accept::Json).await?;
         if let Some(q) = &query {
             trace!("Request query: {q:?}");
             builder = builder.query(q);
@@ -157,7 +188,7 @@ impl ApiClient {
     where
         R: DeserializeOwned,
     {
-        let (url, mut builder) = self.build_request(method, path, true).await?;
+        let (url, mut builder) = self.build_request(method, path, Accept::Json).await?;
         if let Some(q) = &query {
             trace!("Request query: {q:?}");
             builder = builder.query(q);
@@ -179,7 +210,7 @@ impl ApiClient {
         path: &str,
         query: Option<&[(String, String)]>,
     ) -> Result<String, XeroError> {
-        let (_url, mut builder) = self.build_request(method, path, true).await?;
+        let (_url, mut builder) = self.build_request(method, path, Accept::Json).await?;
         if let Some(q) = &query {
             trace!("Request query: {q:?}");
             builder = builder.query(q);
@@ -198,7 +229,7 @@ impl ApiClient {
     where
         B: Serialize,
     {
-        let (_url, mut builder) = self.build_request(method, path, false).await?;
+        let (_url, mut builder) = self.build_request(method, path, Accept::Unset).await?;
         if let Some(b) = body {
             builder = builder.json(&b);
         }
@@ -218,7 +249,7 @@ impl ApiClient {
         R: DeserializeOwned,
         B: Into<reqwest::Body>,
     {
-        let (url, builder) = self.build_request(method, path, true).await?;
+        let (url, builder) = self.build_request(method, path, Accept::Json).await?;
         let builder = builder.header("Content-Type", content_type).body(body);
 
         let response = self.send_expect_success(builder).await?;
@@ -232,7 +263,7 @@ impl ApiClient {
         path: &str,
         query: Option<&[(String, String)]>,
     ) -> Result<Vec<u8>, XeroError> {
-        let (_url, mut builder) = self.build_request(method, path, false).await?;
+        let (_url, mut builder) = self.build_request(method, path, Accept::Unset).await?;
         if let Some(q) = &query {
             builder = builder.query(q);
         }
@@ -251,7 +282,7 @@ impl ApiClient {
     where
         R: DeserializeOwned,
     {
-        let (url, builder) = self.build_request(method, path, true).await?;
+        let (url, builder) = self.build_request(method, path, Accept::Json).await?;
         let builder = builder.multipart(form);
 
         let response = self.send_expect_success(builder).await?;
@@ -297,7 +328,7 @@ impl ApiClient {
     where
         R: DeserializeOwned,
     {
-        let (url, mut builder) = self.build_request(method, path, false).await?;
+        let (url, mut builder) = self.build_request(method, path, Accept::Xml).await?;
         if let Some(q) = &query {
             trace!("Request query: {q:?}");
             builder = builder.query(q);
@@ -319,7 +350,7 @@ impl ApiClient {
     where
         R: DeserializeOwned,
     {
-        let (url, builder) = self.build_request(method, path, false).await?;
+        let (url, builder) = self.build_request(method, path, Accept::Xml).await?;
         let builder = builder
             .header("Content-Type", "text/xml")
             .body(xml_body.to_string());
@@ -337,7 +368,7 @@ impl ApiClient {
         path: &str,
         xml_body: Option<&str>,
     ) -> Result<(), XeroError> {
-        let (_url, mut builder) = self.build_request(method, path, false).await?;
+        let (_url, mut builder) = self.build_request(method, path, Accept::Xml).await?;
         if let Some(body) = xml_body {
             builder = builder
                 .header("Content-Type", "text/xml")
@@ -370,4 +401,34 @@ fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     let start = xml.find(&open)? + open.len();
     let end = xml[start..].find(&close)? + start;
     Some(xml[start..end].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Accept;
+
+    /// The regression this whole type exists for. Xero's Practice Manager 3.1 API began
+    /// enforcing content negotiation on 3 September 2026 and answered `406 Not Acceptable`
+    /// to every XPM read and write this crate made, because the XML paths sent no `Accept`
+    /// at all and leaned on the old XML-by-default behaviour.
+    #[test]
+    fn every_xml_request_names_a_format_it_can_parse() {
+        let value = Accept::Xml.header_value().expect("XML must name a format");
+        assert!(value.contains("xml"));
+        // Both spellings, so the integration does not rest on which one XPM prefers.
+        assert!(value.contains("application/xml"));
+        assert!(value.contains("text/xml"));
+    }
+
+    #[test]
+    fn json_requests_are_unchanged() {
+        assert_eq!(Accept::Json.header_value(), Some("application/json"));
+    }
+
+    /// Attachment downloads and the writes that discard their response keep the header off,
+    /// so this change cannot alter a working Accounting or Payroll call.
+    #[test]
+    fn unset_sends_no_header() {
+        assert_eq!(Accept::Unset.header_value(), None);
+    }
 }
