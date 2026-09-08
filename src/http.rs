@@ -10,6 +10,14 @@ use serde::Serialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// The `Content-Type` for XML request bodies.
+///
+/// It must be `application/xml`: Xero's strict content-type negotiation rejects `text/xml`
+/// outright with `415 Unsupported Media Type` and the message "The server only accepts the
+/// following media types: application/json, application/xml". This is the request direction
+/// only — XPM still *answers* with `text/xml`, which is why [`Accept`] names both spellings.
+pub(crate) const XML_REQUEST_CONTENT_TYPE: &str = "application/xml";
+
 /// Which representation a request will accept back.
 ///
 /// Xero enforces strict content negotiation on the Practice Manager 3.1 API from
@@ -352,7 +360,7 @@ impl ApiClient {
     {
         let (url, builder) = self.build_request(method, path, Accept::Xml).await?;
         let builder = builder
-            .header("Content-Type", "text/xml")
+            .header("Content-Type", XML_REQUEST_CONTENT_TYPE)
             .body(xml_body.to_string());
 
         let response = self.send_expect_success(builder).await?;
@@ -371,7 +379,7 @@ impl ApiClient {
         let (_url, mut builder) = self.build_request(method, path, Accept::Xml).await?;
         if let Some(body) = xml_body {
             builder = builder
-                .header("Content-Type", "text/xml")
+                .header("Content-Type", XML_REQUEST_CONTENT_TYPE)
                 .body(body.to_string());
         }
 
@@ -405,7 +413,7 @@ fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::Accept;
+    use super::{Accept, XML_REQUEST_CONTENT_TYPE};
 
     /// The regression this whole type exists for. Xero's Practice Manager 3.1 API began
     /// enforcing content negotiation on 3 September 2026 and answered `406 Not Acceptable`
@@ -418,6 +426,13 @@ mod tests {
         // Both spellings, so the integration does not rest on which one XPM prefers.
         assert!(value.contains("application/xml"));
         assert!(value.contains("text/xml"));
+    }
+
+    /// Xero's strict content-type negotiation refuses `text/xml` on a request body with
+    /// `415 Unsupported Media Type`, which broke every Practice Manager write.
+    #[test]
+    fn xml_request_bodies_are_sent_as_application_xml() {
+        assert_eq!(XML_REQUEST_CONTENT_TYPE, "application/xml");
     }
 
     #[test]
