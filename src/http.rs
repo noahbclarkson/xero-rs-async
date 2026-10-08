@@ -1,7 +1,8 @@
 //! Shared HTTP client utilities for Xero APIs.
 
 use crate::auth::{TokenManager, TokenSet};
-use crate::error::XeroError;
+use crate::error::{provider_error, DecodeError, ProviderResponse, Service, XeroError};
+use crate::observer::{Attempt, AttemptKind};
 use crate::rate_limiter::RateLimiter;
 use log::{debug, error, trace};
 use reqwest::{multipart::Form, Client, Method, RequestBuilder};
@@ -124,6 +125,10 @@ impl ApiClient {
     async fn send(&self, builder: RequestBuilder) -> Result<reqwest::Response, XeroError> {
         let _permit = self.rate_limiter.acquire_permit(self.tenant_id).await?;
         trace!("Rate limiter permit acquired for tenant {}", self.tenant_id);
+        self.token_manager.notify(
+            &Attempt::for_tenant(AttemptKind::Api, self.tenant_id),
+            None,
+        );
         Ok(builder.send().await?)
     }
 
@@ -135,9 +140,7 @@ impl ApiClient {
         if response.status().is_success() {
             Ok(response)
         } else {
-            let status = response.status();
-            let message = response.text().await?;
-            Err(XeroError::Api { status, message })
+            Err(provider_error(Service::Api, response).await)
         }
     }
 
@@ -147,12 +150,9 @@ impl ApiClient {
     {
         let trimmed = response_text.trim();
         serde_json::from_str::<R>(trimmed).map_err(|e| {
-            error!("Failed to deserialize JSON response from {url}: {e}");
-            error!("Raw JSON response that failed to parse:\n---\n{trimmed}\n---");
-            XeroError::SerdeWithBody {
-                source: e,
-                body: response_text.to_string(),
-            }
+            let decode = DecodeError::json(&e, response_text);
+            error!("Failed to deserialize JSON response from {url}: {decode}");
+            XeroError::Decode(decode)
         })
     }
 
@@ -308,20 +308,14 @@ impl ApiClient {
     {
         let trimmed = response_text.trim();
 
-        // Check for XPM error envelope
-        if trimmed.contains("<Status>ERROR</Status>") {
-            let description = extract_xml_tag(trimmed, "ErrorDescription")
-                .unwrap_or_else(|| "Unknown XPM error".to_string());
-            return Err(XeroError::Api {
-                status: reqwest::StatusCode::BAD_REQUEST,
-                message: description,
-            });
+        if let Some(error) = xml_error_envelope(trimmed) {
+            return Err(error);
         }
 
-        quick_xml::de::from_str::<R>(trimmed).map_err(|e| {
-            error!("Failed to deserialize XML response from {url}: {e}");
-            error!("Raw XML response that failed to parse:\n---\n{trimmed}\n---");
-            XeroError::Xml(e)
+        quick_xml::de::from_str::<R>(trimmed).map_err(|_| {
+            let decode = DecodeError::xml(response_text);
+            error!("Failed to deserialize XML response from {url}: {decode}");
+            XeroError::Decode(decode)
         })
     }
 
@@ -388,17 +382,29 @@ impl ApiClient {
         let trimmed = response_text.trim();
 
         // Still check for XPM error envelope even on "empty" responses
-        if trimmed.contains("<Status>ERROR</Status>") {
-            let description = extract_xml_tag(trimmed, "ErrorDescription")
-                .unwrap_or_else(|| "Unknown XPM error".to_string());
-            return Err(XeroError::Api {
-                status: reqwest::StatusCode::BAD_REQUEST,
-                message: description,
-            });
+        match xml_error_envelope(trimmed) {
+            Some(error) => Err(error),
+            None => Ok(()),
         }
-
-        Ok(())
     }
+}
+
+/// The error an XPM `<Status>ERROR</Status>` envelope stands for, answered with a 200.
+///
+/// The description is the provider's text, so it is kept as the response body rather than in the
+/// message.
+fn xml_error_envelope(xml: &str) -> Option<XeroError> {
+    if !xml.contains("<Status>ERROR</Status>") {
+        return None;
+    }
+    let description =
+        extract_xml_tag(xml, "ErrorDescription").unwrap_or_else(|| "Unknown XPM error".to_string());
+    Some(XeroError::Provider(ProviderResponse::new(
+        Service::Api,
+        reqwest::StatusCode::BAD_REQUEST,
+        None,
+        description,
+    )))
 }
 
 /// Extract the text content of a simple XML tag (no attributes, no nesting).

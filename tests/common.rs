@@ -28,18 +28,11 @@ impl<T> XeroTestResult<T> for Result<T, XeroError> {
             Ok(value) => value,
             Err(err) => {
                 error!("Test failed: {context}");
-                match &err {
-                    XeroError::Api { status, message } => {
-                        error!("Xero API error status: {status}");
-                        error!("Xero raw response: {message}");
-                    }
-                    XeroError::SerdeWithBody { body, .. } => {
-                        error!("Xero raw response: {body}");
-                    }
-                    _ => {
-                        error!("Xero error: {err}");
-                        error!("Xero raw response: <none - request failed before response>");
-                    }
+                // These tests run against a demo company, so printing the body is acceptable here.
+                error!("Xero error: {err}");
+                match err.response_body() {
+                    Some(body) => error!("Xero raw response: {body}"),
+                    None => error!("Xero raw response: <none>"),
                 }
                 panic!("{context}: {err}");
             }

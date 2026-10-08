@@ -206,6 +206,17 @@ let clients = xpm.list_clients(None, None).await?;
 let staff = xpm.list_staff(None).await?;
 ```
 
+## Errors, throttling and attempt counting
+
+- `XeroError` never prints a response body through `Display` or `Debug`, because Xero responses
+  carry customer data. The body is reachable only through `XeroError::response_body()`.
+- `XeroError::kind()` classifies a failure (`Throttled`, `InvalidGrant`, `NotFound`, `Transport`, ...)
+  and `XeroError::retry_after()` returns the wait Xero named in `Retry-After`, as seconds or an HTTP date.
+- `XeroClient::set_attempt_observer` installs an `AttemptObserver` that is told as each HTTP request is
+  dispatched, token refresh retries included, so a caller's quota ledger counts requests Xero really
+  received. `TokenManager::refresh_token_no_cache_observed` scopes an observer to one refresh.
+- `XeroClient::delete_connection` removes one entry from `/connections`.
+
 ## Project Structure
 
 ```
@@ -230,8 +241,9 @@ src/
     projects/        -- Project models
   auth.rs            -- OAuth 2.0 token manager
   client.rs          -- XeroClient with per-tenant handle constructors
-  error.rs           -- Error types
+  error.rs           -- Error types, `kind()` classifier, `Retry-After`
   http.rs            -- HTTP abstraction layer
+  observer.rs        -- Attempt observer: told of every HTTP request dispatched
   rate_limiter.rs    -- Tenant-aware rate limiter
 ```
 

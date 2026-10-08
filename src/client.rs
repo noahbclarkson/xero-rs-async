@@ -19,7 +19,8 @@ use crate::auth::{TokenManager, TokenSet};
 use crate::endpoints::assets::AssetsApi;
 #[cfg(feature = "files")]
 use crate::endpoints::files::FilesApi;
-use crate::error::XeroError;
+use crate::error::{provider_error, DecodeError, Service, XeroError};
+use crate::observer::{Attempt, AttemptKind, AttemptObserver};
 use crate::rate_limiter::RateLimiter;
 
 use log::{debug, info};
@@ -27,6 +28,14 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
+
+const CONNECTIONS_URL: &str = "https://api.xero.com/connections";
+
+/// How long a connection DELETE may take to connect.
+const CONNECTIONS_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How long a connection DELETE may take in all.
+const CONNECTIONS_DELETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Represents a Xero tenant connection.
 #[derive(Debug, Clone, Deserialize)]
@@ -44,6 +53,10 @@ pub struct XeroClient {
     pub(crate) http_client: Client,
     pub token_manager: Arc<TokenManager>,
     pub(crate) rate_limiter: Arc<RateLimiter>,
+    /// Never follows a redirect: a connection DELETE carries a bearer token and must go to the
+    /// one URL it names.
+    connections_client: Client,
+    connections_url: String,
 }
 
 /// A tenant-bound client that vends API handles without requiring tenant IDs per call.
@@ -181,6 +194,43 @@ impl TenantClient {
 }
 
 impl XeroClient {
+    pub(crate) fn assemble(
+        http_client: Client,
+        token_manager: Arc<TokenManager>,
+        rate_limiter: Arc<RateLimiter>,
+    ) -> Self {
+        let connections_client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECTIONS_CONNECT_TIMEOUT)
+            .build()
+            // Only a TLS backend that cannot initialise fails here, and `Client::new` would panic
+            // on the same condition.
+            .unwrap_or_else(|_| Client::new());
+        Self {
+            http_client,
+            token_manager,
+            rate_limiter,
+            connections_client,
+            connections_url: CONNECTIONS_URL.to_owned(),
+        }
+    }
+
+    /// Points the `/connections` calls at `url`. Meant for tests against a local server.
+    #[cfg(test)]
+    pub(crate) fn with_connections_url(mut self, url: &str) -> Self {
+        self.connections_url = url.trim_end_matches('/').to_owned();
+        self
+    }
+
+    /// Installs an observer told about every HTTP request this client sends: tenant API calls,
+    /// token exchanges, refreshes and revocations, and the `/connections` calls.
+    ///
+    /// The observer is shared by every clone of this client. It is called as each request is
+    /// dispatched, so a caller's quota ledger can count real attempts, retries included.
+    pub fn set_attempt_observer(&self, observer: Arc<dyn AttemptObserver>) {
+        self.token_manager.set_attempt_observer(observer);
+    }
+
     /// Creates a new `XeroClient`.
     ///
     /// # Arguments
@@ -205,11 +255,7 @@ impl XeroClient {
         ));
 
         info!("XeroClient created successfully.");
-        Ok(Self {
-            http_client,
-            token_manager,
-            rate_limiter,
-        })
+        Ok(Self::assemble(http_client, token_manager, rate_limiter))
     }
 
     /// Creates a new `XeroClient` configured for the OAuth 2.0 PKCE flow.
@@ -237,11 +283,7 @@ impl XeroClient {
         ));
 
         info!("XeroClient created successfully (PKCE).");
-        Ok(Self {
-            http_client,
-            token_manager,
-            rate_limiter,
-        })
+        Ok(Self::assemble(http_client, token_manager, rate_limiter))
     }
 
     /// Creates a new PKCE `XeroClient` with an isolated `TokenManager` pre-seeded with the given token.
@@ -264,11 +306,7 @@ impl XeroClient {
         token_manager.set_token(&initial_token).await;
 
         info!("XeroClient created successfully (PKCE) with pre-seeded token.");
-        Ok(Self {
-            http_client,
-            token_manager,
-            rate_limiter,
-        })
+        Ok(Self::assemble(http_client, token_manager, rate_limiter))
     }
 
     /// Creates a new `XeroClient` with an isolated `TokenManager` pre-seeded with the given token.
@@ -301,11 +339,7 @@ impl XeroClient {
         token_manager.set_token(&initial_token).await;
 
         info!("XeroClient created successfully with pre-seeded token.");
-        Ok(Self {
-            http_client,
-            token_manager,
-            rate_limiter,
-        })
+        Ok(Self::assemble(http_client, token_manager, rate_limiter))
     }
 
     /// Retrieves the list of tenants (organisations) connected to the current token.
@@ -319,21 +353,52 @@ impl XeroClient {
         &self,
         access_token: &str,
     ) -> Result<Vec<Connection>, XeroError> {
-        let url = "https://api.xero.com/connections";
-        let response = self
+        let request = self
             .http_client
-            .get(url)
+            .get(&self.connections_url)
             .bearer_auth(access_token)
-            .header("Accept", "application/json")
-            .send()
-            .await?;
+            .header("Accept", "application/json");
+        self.token_manager
+            .notify(&Attempt::untenanted(AttemptKind::Connections), None);
+        let response = request.send().await?;
 
         if response.status().is_success() {
-            Ok(response.json::<Vec<Connection>>().await?)
+            let text = response.text().await?;
+            serde_json::from_str(text.trim()).map_err(|error| {
+                // The list names the firm's clients: keep its shape in the error, not its content.
+                XeroError::Decode(DecodeError::json_redacted(&error, text.len()))
+            })
         } else {
-            let status = response.status();
-            let message = response.text().await?;
-            Err(XeroError::Api { status, message })
+            Err(provider_error(Service::Connections, response).await)
+        }
+    }
+
+    /// Removes one connection from this app: `DELETE /connections/{connection_id}`.
+    ///
+    /// `connection_id` is the `id` of a [`Connection`], not its `tenant_id`. Only that one
+    /// tenant is disconnected; the user's other connections to the app stay. Redirects are not
+    /// followed and the request times out after 20 seconds. A connection that is already gone
+    /// answers 404, which is returned as an error with [`crate::error::ErrorKind::NotFound`] so the
+    /// caller can decide whether that counts as done.
+    pub async fn delete_connection(
+        &self,
+        access_token: &str,
+        connection_id: Uuid,
+    ) -> Result<(), XeroError> {
+        let request = self
+            .connections_client
+            .delete(format!("{}/{connection_id}", self.connections_url))
+            .bearer_auth(access_token)
+            .header("Accept", "application/json")
+            .timeout(CONNECTIONS_DELETE_TIMEOUT);
+        self.token_manager
+            .notify(&Attempt::untenanted(AttemptKind::DeleteConnection), None);
+        let response = request.send().await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(provider_error(Service::Connections, response).await)
         }
     }
 

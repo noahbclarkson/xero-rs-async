@@ -51,5 +51,6 @@ bank-feeds = []
 practice-manager = []
 
 [dev-dependencies]
+wiremock = "0.6"
 dotenvy = "0.15.7"
 env_logger = "0.11"

@@ -9,7 +9,8 @@
 //!   authorize redirect, and presents the verifier when exchanging the code.
 //!   Construct with [`TokenManager::new_pkce`].
 
-use crate::error::XeroError;
+use crate::error::{provider_error, DecodeError, Service, XeroError};
+use crate::observer::{Attempt, AttemptKind, AttemptObserver, ObserverSlot};
 use base64::Engine;
 use log::{debug, info, trace, warn};
 use rand::RngExt;
@@ -22,6 +23,13 @@ use tokio::sync::Mutex;
 const AUTHORIZE_URL: &str = "https://login.xero.com/identity/connect/authorize";
 const TOKEN_URL: &str = "https://identity.xero.com/connect/token";
 const REVOCATION_URL: &str = "https://identity.xero.com/connect/revocation";
+
+/// Reads a token endpoint answer. A decode failure keeps no body: it would hold the tokens.
+async fn read_token_set(response: reqwest::Response) -> Result<TokenSet, XeroError> {
+    let text = response.text().await?;
+    serde_json::from_str(text.trim())
+        .map_err(|error| XeroError::Decode(DecodeError::json_redacted(&error, text.len())))
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TokenSet {
@@ -74,6 +82,9 @@ pub struct TokenManager {
     redirect_uri: String,
     auth_mode: AuthMode,
     cached_token: Arc<Mutex<Option<TokenSet>>>,
+    token_url: String,
+    revocation_url: String,
+    observer: ObserverSlot,
 }
 
 impl TokenManager {
@@ -91,6 +102,9 @@ impl TokenManager {
             redirect_uri,
             auth_mode: AuthMode::Code { client_secret },
             cached_token: Arc::new(Mutex::new(None)),
+            token_url: TOKEN_URL.to_owned(),
+            revocation_url: REVOCATION_URL.to_owned(),
+            observer: ObserverSlot::default(),
         }
     }
 
@@ -107,7 +121,31 @@ impl TokenManager {
             redirect_uri,
             auth_mode: AuthMode::Pkce,
             cached_token: Arc::new(Mutex::new(None)),
+            token_url: TOKEN_URL.to_owned(),
+            revocation_url: REVOCATION_URL.to_owned(),
+            observer: ObserverSlot::default(),
         }
+    }
+
+    /// Points the token and revocation endpoints at `base` (`{base}/connect/token`). Meant for
+    /// tests against a local server.
+    #[cfg(test)]
+    pub(crate) fn with_identity_base_url(mut self, base: &str) -> Self {
+        let base = base.trim_end_matches('/');
+        self.token_url = format!("{base}/connect/token");
+        self.revocation_url = format!("{base}/connect/revocation");
+        self
+    }
+
+    /// Installs an observer told about every request this manager sends, token refreshes
+    /// included, and about every tenant API request of a client built on it.
+    pub fn set_attempt_observer(&self, observer: Arc<dyn AttemptObserver>) {
+        self.observer.set(observer);
+    }
+
+    /// Reports one dispatched request to the installed observer and to `scoped`, if any.
+    pub(crate) fn notify(&self, attempt: &Attempt, scoped: Option<&dyn AttemptObserver>) {
+        self.observer.notify(attempt, scoped);
     }
 
     /// Returns `true` if this manager is configured for the PKCE flow.
@@ -194,7 +232,7 @@ impl TokenManager {
         &'a self,
         mut params: Vec<(&'a str, &'a str)>,
     ) -> reqwest::RequestBuilder {
-        let req = self.http_client.post(TOKEN_URL);
+        let req = self.http_client.post(&self.token_url);
         match &self.auth_mode {
             AuthMode::Code { client_secret } => req
                 .basic_auth(&self.client_id, Some(client_secret))
@@ -221,10 +259,12 @@ impl TokenManager {
         if let Some(v) = code_verifier {
             params.push(("code_verifier", v));
         }
-        let response = self.token_request(params).send().await?;
+        let request = self.token_request(params);
+        self.notify(&Attempt::untenanted(AttemptKind::TokenExchange), None);
+        let response = request.send().await?;
 
         if response.status().is_success() {
-            let token_set = response.json::<TokenSet>().await?;
+            let token_set = read_token_set(response).await?;
             if persist_cache {
                 info!("Successfully exchanged code for token set. Saving to in-memory cache.");
                 self.save_token(&token_set).await;
@@ -233,11 +273,7 @@ impl TokenManager {
             }
             Ok(token_set)
         } else {
-            let status = response.status();
-            let message = response.text().await?;
-            Err(XeroError::Auth(format!(
-                "Failed to exchange code: {status} - {message}"
-            )))
+            Err(provider_error(Service::Identity, response).await)
         }
     }
 
@@ -305,12 +341,14 @@ impl TokenManager {
     /// the manager's configured mode.
     ///
     /// Retries up to 2 times (3 total attempts) with backoff on transient
-    /// network errors.  HTTP 4xx responses are **not** retried because they
-    /// indicate a permanent token problem (e.g. `invalid_grant`).
+    /// network errors and 5xx answers. HTTP 4xx responses are **not** retried
+    /// because they indicate a permanent token problem (e.g. `invalid_grant`).
+    /// Every request sent is reported to the attempt observer.
     async fn refresh_token_inner(
         &self,
         token_set: &TokenSet,
         persist_cache: bool,
+        scoped: Option<&dyn AttemptObserver>,
     ) -> Result<TokenSet, XeroError> {
         info!("Attempting to refresh access token.");
         let refresh_token = token_set
@@ -327,12 +365,14 @@ impl TokenManager {
                 ("grant_type", "refresh_token"),
                 ("refresh_token", refresh_token.as_str()),
             ];
-            let result = self.token_request(params).send().await;
+            let request = self.token_request(params);
+            self.notify(&Attempt::untenanted(AttemptKind::TokenRefresh), scoped);
+            let result = request.send().await;
 
             match result {
                 Ok(response) => {
                     if response.status().is_success() {
-                        let new_token_set = response.json::<TokenSet>().await?;
+                        let new_token_set = read_token_set(response).await?;
                         if persist_cache {
                             info!("Successfully refreshed token set. Saving to in-memory cache.");
                             self.save_token(&new_token_set).await;
@@ -345,30 +385,27 @@ impl TokenManager {
                     // Non-success HTTP response – do NOT retry 4xx errors as they
                     // indicate a permanent problem (bad token, revoked grant, etc.).
                     let status = response.status();
-                    let message = response.text().await?;
+                    let error = provider_error(Service::Identity, response).await;
                     if status.is_client_error() {
-                        return Err(XeroError::Auth(format!(
-                            "Failed to refresh token: {status} - {message}"
-                        )));
+                        return Err(error);
                     }
                     // 5xx or other server-side errors are transient – retry.
                     warn!(
-                        "Token refresh attempt {}/{} got server error {status}: {message}",
+                        "Token refresh attempt {}/{} got server error {status}",
                         attempt + 1,
                         max_attempts
                     );
-                    last_err = Some(XeroError::Auth(format!(
-                        "Failed to refresh token: {status} - {message}"
-                    )));
+                    last_err = Some(error);
                 }
                 Err(e) => {
                     // Network / connection errors are transient – retry.
+                    let error = XeroError::from(e);
                     warn!(
-                        "Token refresh attempt {}/{} failed with network error: {e}",
+                        "Token refresh attempt {}/{} failed with network error: {error}",
                         attempt + 1,
                         max_attempts
                     );
-                    last_err = Some(XeroError::Request(e));
+                    last_err = Some(error);
                 }
             }
 
@@ -387,7 +424,7 @@ impl TokenManager {
 
     /// Refreshes an expired access token using a refresh token.
     pub async fn refresh_token(&self, token_set: &TokenSet) -> Result<TokenSet, XeroError> {
-        self.refresh_token_inner(token_set, true).await
+        self.refresh_token_inner(token_set, true, None).await
     }
 
     /// Refreshes a token without mutating in-memory token cache.
@@ -398,7 +435,22 @@ impl TokenManager {
         &self,
         token_set: &TokenSet,
     ) -> Result<TokenSet, XeroError> {
-        self.refresh_token_inner(token_set, false).await
+        self.refresh_token_inner(token_set, false, None).await
+    }
+
+    /// [`Self::refresh_token_no_cache`], reporting each token request it sends to `observer` as
+    /// well as to the manager-wide observer.
+    ///
+    /// A refresh retries internally, so the caller cannot otherwise know how many requests Xero
+    /// received. The observer is scoped to this one call, which keeps the count correct when
+    /// several tenants refresh at once.
+    pub async fn refresh_token_no_cache_observed(
+        &self,
+        token_set: &TokenSet,
+        observer: &dyn AttemptObserver,
+    ) -> Result<TokenSet, XeroError> {
+        self.refresh_token_inner(token_set, false, Some(observer))
+            .await
     }
 
     /// Revokes a refresh token and removes all of the user's connections to this app.
@@ -408,26 +460,25 @@ impl TokenManager {
     /// (`base64(client_id + ":")`), which `reqwest::basic_auth` produces when
     /// passed `Some("")`.
     pub async fn revoke_token(&self, refresh_token: &str) -> Result<(), XeroError> {
-        let req = self.http_client.post(REVOCATION_URL);
+        let req = self.http_client.post(&self.revocation_url);
         let req = match &self.auth_mode {
             AuthMode::Code { client_secret } => {
                 req.basic_auth(&self.client_id, Some(client_secret))
             }
             AuthMode::Pkce => req.basic_auth(&self.client_id, Some("")),
         };
-        let response = req.form(&[("token", refresh_token)]).send().await?;
+        let request = req.form(&[("token", refresh_token)]);
+        self.notify(&Attempt::untenanted(AttemptKind::TokenRevocation), None);
+        let response = request.send().await?;
 
         if response.status().is_success() {
             info!("Successfully revoked refresh token.");
             Ok(())
         } else {
-            let status = response.status();
-            let message = response.text().await?;
-            Err(XeroError::Auth(format!(
-                "Failed to revoke token: {status} - {message}"
-            )))
+            Err(provider_error(Service::Identity, response).await)
         }
     }
+
 
     /// Retrieves the current valid access token, refreshing it if necessary.
     pub async fn get_access_token(&self) -> Result<String, XeroError> {

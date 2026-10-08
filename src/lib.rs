@@ -71,5 +71,8 @@ pub mod endpoints;
 pub mod error;
 mod http;
 pub mod models;
+pub mod observer;
 pub mod rate_limiter;
 mod util;
+#[cfg(test)]
+mod wire_tests;
