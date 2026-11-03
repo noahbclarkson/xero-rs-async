@@ -10,8 +10,8 @@ use uuid::Uuid;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use crate::auth::{TokenManager, TokenSet};
-use crate::client::XeroClient;
+use crate::auth::{TokenPersistence, TokenSet};
+use crate::client::{XeroClient, XeroEndpoints};
 use crate::error::{ErrorKind, XeroError};
 use crate::http::ApiClient;
 use crate::observer::{Attempt, AttemptKind};
@@ -20,17 +20,20 @@ use crate::rate_limiter::RateLimiter;
 const PRIVATE_BODY: &str = "Invoice INV-9 for Acme Ltd totals $12,000.00";
 
 async fn client_for(server: &MockServer) -> XeroClient {
-    let http = reqwest::Client::new();
-    let manager = TokenManager::new(
-        http.clone(),
+    let limiter = Arc::new(RateLimiter::new().await.expect("limiter"));
+    XeroClient::new(
         "client-id".into(),
         "client-secret".into(),
         "http://localhost/callback".into(),
+        limiter,
     )
-    .with_identity_base_url(&server.uri());
-    let limiter = Arc::new(RateLimiter::new().await.expect("limiter"));
-    XeroClient::assemble(http, Arc::new(manager), limiter)
-        .with_connections_url(&format!("{}/connections", server.uri()))
+    .await
+    .expect("client")
+    .with_endpoints(XeroEndpoints::new(
+        &server.uri(),
+        &server.uri(),
+        &server.uri(),
+    ))
 }
 
 fn stored_token() -> TokenSet {
@@ -169,7 +172,8 @@ async fn retry_after_may_be_an_http_date() {
     Mock::given(method("GET"))
         .and(path("/thing"))
         .respond_with(
-            ResponseTemplate::new(429).insert_header("Retry-After", "Wed, 09 Sep 2020 07:00:00 GMT"),
+            ResponseTemplate::new(429)
+                .insert_header("Retry-After", "Wed, 09 Sep 2020 07:00:00 GMT"),
         )
         .mount(&server)
         .await;
@@ -268,7 +272,10 @@ async fn delete_connection_reports_gone_throttled_and_redirected_answers() {
 
     let error = client.delete_connection("t", gone).await.expect_err("404");
     assert_eq!(error.kind(), ErrorKind::NotFound);
-    let error = client.delete_connection("t", throttled).await.expect_err("429");
+    let error = client
+        .delete_connection("t", throttled)
+        .await
+        .expect_err("429");
     assert_eq!(error.retry_after(), Some(Duration::from_secs(17)));
     let error = client.delete_connection("t", moved).await.expect_err("302");
     assert_eq!(error.status().map(|status| status.as_u16()), Some(302));
@@ -292,4 +299,58 @@ async fn a_failed_connection_list_keeps_its_shape_and_drops_its_content() {
     assert!(matches!(error, XeroError::Decode(_)));
     assert!(!format!("{error:?}").contains("Acme"));
     assert_eq!(error.response_body(), None);
+}
+
+#[derive(Default)]
+struct SavedTokens(Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl TokenPersistence for SavedTokens {
+    async fn on_refreshed(&self, token: &TokenSet) {
+        self.0
+            .lock()
+            .expect("saved tokens")
+            .push(token.refresh_token.clone().unwrap_or_default());
+    }
+}
+
+/// Xero invalidates the old refresh token the moment it issues a new one, so a refresh that a
+/// per-connection client makes mid-job must reach the caller's store, and must not reach the store
+/// of the client it was derived from.
+#[tokio::test]
+async fn an_isolated_client_hands_a_rotated_token_to_its_own_store_only() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let shared = client_for(&server).await;
+    let shared_store = Arc::new(SavedTokens::default());
+    shared.token_manager.set_persistence(shared_store.clone());
+    let recorder = Arc::new(Recorder::default());
+    shared.set_attempt_observer(recorder.clone());
+
+    let expired = TokenSet {
+        obtained_at: chrono::Utc::now() - chrono::Duration::hours(2),
+        ..stored_token()
+    };
+    let isolated = shared.isolated_with_token(expired).await;
+    let own_store = Arc::new(SavedTokens::default());
+    isolated.token_manager.set_persistence(own_store.clone());
+
+    let access = isolated
+        .token_manager
+        .get_access_token()
+        .await
+        .expect("refreshes");
+
+    assert_eq!(access, "new-access");
+    assert_eq!(*own_store.0.lock().expect("store"), vec!["new-refresh"]);
+    assert!(shared_store.0.lock().expect("store").is_empty());
+    // The observer is a quota ledger, so the derived client still reports to it.
+    assert_eq!(recorder.kinds(), vec![AttemptKind::TokenRefresh]);
+    // The shared client never saw the per-connection token.
+    assert!(shared.token_manager.get_access_token().await.is_err());
 }

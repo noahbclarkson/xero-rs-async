@@ -18,8 +18,8 @@ pub mod super_fund_products;
 pub mod super_funds;
 pub mod timesheets;
 
-const BASE_URL_V1: &str = "https://api.xero.com/payroll.xro/1.0";
-const BASE_URL_V2: &str = "https://api.xero.com/payroll.xro/2.0";
+const BASE_URL_V1: &str = "/payroll.xro/1.0";
+const BASE_URL_V2: &str = "/payroll.xro/2.0";
 
 #[derive(Debug, Clone)]
 pub struct PayrollAuApi {
@@ -31,14 +31,14 @@ impl PayrollAuApi {
     pub(crate) fn new(client: XeroClient, tenant_id: Uuid) -> Self {
         Self {
             client_v1: ApiClient::new(
-                BASE_URL_V1,
+                client.endpoints.api_url(BASE_URL_V1),
                 tenant_id,
                 client.http_client.clone(),
                 client.token_manager.clone(),
                 client.rate_limiter.clone(),
             ),
             client_v2: ApiClient::new(
-                BASE_URL_V2,
+                client.endpoints.api_url(BASE_URL_V2),
                 tenant_id,
                 client.http_client.clone(),
                 client.token_manager.clone(),

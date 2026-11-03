@@ -6,12 +6,13 @@ use crate::http::ApiClient;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[allow(clippy::module_inception)]
 pub mod projects;
 pub mod tasks;
 pub mod time_entries;
 pub mod users;
 
-const BASE_URL: &str = "https://api.xero.com/projects.xro/2.0";
+const BASE_URL: &str = "/projects.xro/2.0";
 
 #[derive(Debug, Clone)]
 pub struct ProjectsApi {
@@ -22,7 +23,7 @@ impl ProjectsApi {
     pub(crate) fn new(client: XeroClient, tenant_id: Uuid) -> Self {
         Self {
             client: ApiClient::new(
-                BASE_URL,
+                client.endpoints.api_url(BASE_URL),
                 tenant_id,
                 client.http_client.clone(),
                 client.token_manager.clone(),

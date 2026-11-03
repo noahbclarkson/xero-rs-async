@@ -67,14 +67,18 @@ pub struct BookDepreciationSetting {
     pub averaging_method: Option<AveragingMethod>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depreciation_rate: Option<f64>,
+    /// Years, and not always whole ones: Australian effective lives such as 6.67 years are common.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub effective_life_years: Option<u32>,
+    pub effective_life_years: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depreciation_calculation_method: Option<DepreciationCalculationMethod>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_limit: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub residual_value: Option<f64>,
+    /// Percentage of private use (0-100). Reduces deductible depreciation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_use_percentage: Option<f64>,
     /// Captures any additional fields Xero may return
     #[serde(flatten)]
     #[serde(skip_serializing)]

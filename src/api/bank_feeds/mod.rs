@@ -9,7 +9,7 @@ use uuid::Uuid;
 pub mod feed_connections;
 pub mod statements;
 
-const BASE_URL: &str = "https://api.xero.com/bankfeeds.xro/1.0";
+const BASE_URL: &str = "/bankfeeds.xro/1.0";
 
 #[derive(Debug, Clone)]
 pub struct BankFeedsApi {
@@ -20,7 +20,7 @@ impl BankFeedsApi {
     pub(crate) fn new(client: XeroClient, tenant_id: Uuid) -> Self {
         Self {
             client: ApiClient::new(
-                BASE_URL,
+                client.endpoints.api_url(BASE_URL),
                 tenant_id,
                 client.http_client.clone(),
                 client.token_manager.clone(),

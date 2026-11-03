@@ -14,7 +14,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
-const BASE_URL: &str = "https://api.xero.com/files.xro/1.0";
+const BASE_URL: &str = "/files.xro/1.0";
 
 /// A handle to the Files API endpoints.
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ impl FilesApi {
     pub(crate) fn new(client: XeroClient, tenant_id: Uuid) -> Self {
         Self {
             client: ApiClient::new(
-                BASE_URL,
+                client.endpoints.api_url(BASE_URL),
                 tenant_id,
                 client.http_client.clone(),
                 client.token_manager.clone(),

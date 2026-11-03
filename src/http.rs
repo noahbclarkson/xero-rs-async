@@ -125,10 +125,8 @@ impl ApiClient {
     async fn send(&self, builder: RequestBuilder) -> Result<reqwest::Response, XeroError> {
         let _permit = self.rate_limiter.acquire_permit(self.tenant_id).await?;
         trace!("Rate limiter permit acquired for tenant {}", self.tenant_id);
-        self.token_manager.notify(
-            &Attempt::for_tenant(AttemptKind::Api, self.tenant_id),
-            None,
-        );
+        self.token_manager
+            .notify(&Attempt::for_tenant(AttemptKind::Api, self.tenant_id), None);
         Ok(builder.send().await?)
     }
 
@@ -212,6 +210,7 @@ impl ApiClient {
         self.deserialize_json(&url, &response_text)
     }
 
+    #[cfg(feature = "assets")]
     pub(crate) async fn send_request_text(
         &self,
         method: Method,
@@ -335,6 +334,35 @@ impl ApiClient {
             trace!("Request query: {q:?}");
             builder = builder.query(q);
         }
+
+        let response = self.send_expect_success(builder).await?;
+        let response_text = response.text().await?;
+        self.deserialize_xml(&url, &response_text)
+    }
+
+    /// Like [`Self::send_request_xml`] but with its own total timeout in place of the client-wide
+    /// [`crate::client::DEFAULT_TIMEOUT`].
+    ///
+    /// XPM's practice-wide bulk endpoints build the whole XML document before the first byte
+    /// arrives, so on a large practice the wait alone can exceed the client-wide budget. Callers
+    /// pass a larger, still bounded, budget here.
+    #[cfg(feature = "practice-manager")]
+    pub(crate) async fn send_request_xml_with_timeout<R>(
+        &self,
+        method: Method,
+        path: &str,
+        query: Option<&[(String, String)]>,
+        timeout: std::time::Duration,
+    ) -> Result<R, XeroError>
+    where
+        R: DeserializeOwned,
+    {
+        let (url, mut builder) = self.build_request(method, path, Accept::Xml).await?;
+        if let Some(q) = &query {
+            trace!("Request query: {q:?}");
+            builder = builder.query(q);
+        }
+        builder = builder.timeout(timeout);
 
         let response = self.send_expect_success(builder).await?;
         let response_text = response.text().await?;

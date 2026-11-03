@@ -32,7 +32,7 @@ pub mod superannuation;
 pub mod timesheets;
 pub mod tracking_categories;
 
-const BASE_URL: &str = "https://api.xero.com/payroll.xro/2.0";
+const BASE_URL: &str = "/payroll.xro/2.0";
 
 #[derive(Debug, Clone)]
 pub struct PayrollNzApi {
@@ -43,7 +43,7 @@ impl PayrollNzApi {
     pub(crate) fn new(client: XeroClient, tenant_id: Uuid) -> Self {
         Self {
             client: ApiClient::new(
-                BASE_URL,
+                client.endpoints.api_url(BASE_URL),
                 tenant_id,
                 client.http_client.clone(),
                 client.token_manager.clone(),

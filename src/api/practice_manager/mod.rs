@@ -4,6 +4,7 @@ use crate::auth::TokenSet;
 use crate::client::XeroClient;
 use crate::http::ApiClient;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 pub mod categories;
@@ -19,7 +20,12 @@ pub mod tasks;
 pub mod templates;
 pub mod time;
 
-const BASE_URL: &str = "https://api.xero.com/practicemanager/3.1";
+const BASE_URL: &str = "/practicemanager/3.1";
+
+/// Total budget for the practice-wide bulk lists (clients, client groups). Each is one XML
+/// document covering every record in the practice, thousands of rows for a large firm, generated
+/// before the first byte is sent, so the client-wide 30 second timeout is far too tight.
+pub(crate) const BULK_LIST_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone)]
 pub struct PracticeManagerApi {
@@ -30,7 +36,7 @@ impl PracticeManagerApi {
     pub(crate) fn new(client: XeroClient, tenant_id: Uuid) -> Self {
         Self {
             client: ApiClient::new(
-                BASE_URL,
+                client.endpoints.api_url(BASE_URL),
                 tenant_id,
                 client.http_client.clone(),
                 client.token_manager.clone(),

@@ -1,6 +1,6 @@
 //! API resource for XPM Client Groups (Practice Manager v3.1).
 
-use super::PracticeManagerApi;
+use super::{PracticeManagerApi, BULK_LIST_TIMEOUT};
 use crate::error::XeroError;
 use crate::models::practice_manager::client_group::{GroupResponse, GroupsResponse};
 use reqwest::Method;
@@ -21,7 +21,12 @@ impl<'a> ClientGroupsResource<'a> {
     pub async fn list(&self) -> Result<GroupsResponse, XeroError> {
         self.api
             .client
-            .send_request_xml(Method::GET, "/clientgroup.api/list", None)
+            .send_request_xml_with_timeout(
+                Method::GET,
+                "/clientgroup.api/list",
+                None,
+                BULK_LIST_TIMEOUT,
+            )
             .await
     }
 
