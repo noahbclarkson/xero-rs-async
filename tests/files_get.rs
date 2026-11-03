@@ -6,6 +6,7 @@ mod common;
 use common::{log_raw_accounting_response, log_raw_files_response, XeroTestResult};
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_folders_and_by_id() {
     let test_client = common::get_test_client().await;
     let api = test_client.client.files_for_tenant(test_client.tenant_id);
@@ -44,6 +45,7 @@ async fn get_folders_and_by_id() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_files_and_content() {
     let test_client = common::get_test_client().await;
     let api = test_client.client.files_for_tenant(test_client.tenant_id);
@@ -81,6 +83,7 @@ async fn get_files_and_content() {
 }
 
 #[tokio::test]
+#[ignore = "Requires Xero API credentials"]
 async fn get_associations() {
     let test_client = common::get_test_client().await;
     let files_api = test_client.client.files_for_tenant(test_client.tenant_id);

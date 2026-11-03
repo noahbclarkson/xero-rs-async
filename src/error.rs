@@ -115,7 +115,11 @@ impl ProviderResponse {
 
 impl fmt::Display for ProviderResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Xero {} refused the request ({})", self.service, self.status)?;
+        write!(
+            f,
+            "Xero {} refused the request ({})",
+            self.service, self.status
+        )?;
         if let Some(code) = &self.oauth_error {
             write!(f, ": {code}")?;
         }
@@ -177,9 +181,7 @@ impl fmt::Display for DecodeError {
         write!(
             f,
             "could not decode the {} response ({} bytes): {}",
-            self.format,
-            self.bytes,
-            self.detail
+            self.format, self.bytes, self.detail
         )
     }
 }
@@ -207,10 +209,7 @@ pub enum XeroError {
     /// An error the library itself describes, with the status to report it under. The message is
     /// written by this crate, never taken from a response.
     #[error("Xero API error ({status}): {message}")]
-    Api {
-        status: StatusCode,
-        message: String,
-    },
+    Api { status: StatusCode, message: String },
 
     /// Xero answered with a non-success status.
     #[error("{0}")]
@@ -276,9 +275,7 @@ impl XeroError {
                 }
             }
             Self::Api { status, .. } => kind_of_status(*status),
-            Self::Request(error) => error
-                .status()
-                .map_or(ErrorKind::Transport, kind_of_status),
+            Self::Request(error) => error.status().map_or(ErrorKind::Transport, kind_of_status),
             Self::RateLimiter(_) => ErrorKind::DailyLimit,
             Self::Auth(_) => ErrorKind::Rejected,
             Self::Serde(_) | Self::Decode(_) | Self::Io(_) => ErrorKind::InvalidResponse,
@@ -466,7 +463,10 @@ mod tests {
         let now = DateTime::parse_from_rfc3339("2026-09-09T06:59:00Z")
             .expect("fixture")
             .with_timezone(&Utc);
-        assert_eq!(parse_retry_after(" 30 ", now), Some(Duration::from_secs(30)));
+        assert_eq!(
+            parse_retry_after(" 30 ", now),
+            Some(Duration::from_secs(30))
+        );
         assert_eq!(
             parse_retry_after("Wed, 09 Sep 2026 07:00:00 GMT", now),
             Some(Duration::from_secs(60))

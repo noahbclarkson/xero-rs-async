@@ -18,6 +18,7 @@ impl<'a> ReportsResource<'a> {
     }
 
     /// Retrieves the Balance Sheet report (typed).
+    #[allow(clippy::too_many_arguments)]
     pub async fn balance_sheet_report(
         &self,
         date: Option<NaiveDate>,

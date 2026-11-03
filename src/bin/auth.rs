@@ -95,11 +95,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (Flow::Code, _) => xero_client
             .token_manager
             .get_authorization_url(&scopes, state),
-        (Flow::Pkce, Some(codes)) => xero_client.token_manager.get_authorization_url_pkce(
-            &scopes,
-            state,
-            &codes.challenge,
-        ),
+        (Flow::Pkce, Some(codes)) => {
+            xero_client
+                .token_manager
+                .get_authorization_url_pkce(&scopes, state, &codes.challenge)
+        }
         (Flow::Pkce, None) => unreachable!(),
     };
 

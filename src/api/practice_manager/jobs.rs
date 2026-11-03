@@ -203,7 +203,10 @@ impl<'a> JobsResource<'a> {
     /// Read the list through [`JobDocumentsResponse::items`]. This returned [`JobResponse`] until
     /// the shape was corrected, and a `Job` carries no documents, so every document the provider
     /// sent was parsed away and the call answered successfully with nothing.
-    pub async fn list_documents(&self, job_number: &str) -> Result<JobDocumentsResponse, XeroError> {
+    pub async fn list_documents(
+        &self,
+        job_number: &str,
+    ) -> Result<JobDocumentsResponse, XeroError> {
         let path = format!("/job.api/documents/{job_number}");
         self.api
             .client

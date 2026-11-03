@@ -133,6 +133,7 @@ impl<'a> AttachmentsResource<'a> {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn upload<B>(
         &self,
         method: Method,
