@@ -217,6 +217,22 @@ let staff = xpm.list_staff(None).await?;
   received. `TokenManager::refresh_token_no_cache_observed` scopes an observer to one refresh.
 - `XeroClient::delete_connection` removes one entry from `/connections`.
 
+## Timeouts, token storage and test servers
+
+- Every request has a 30 second total timeout and a 5 second connect timeout
+  (`client::DEFAULT_TIMEOUT`, `client::DEFAULT_CONNECT_TIMEOUT`). The practice-wide XPM lists
+  (`clients().list`, `client_groups().list`) get 300 seconds, because Practice Manager builds the whole
+  document before sending a byte.
+- Xero rotates the refresh token on every refresh. To keep tokens somewhere durable, implement
+  `auth::TokenPersistence` and attach it with `TokenManager::set_persistence`; it is called with each
+  rotated `TokenSet`. If it returns an error the refresh fails with `XeroError::TokenNotPersisted`,
+  which still carries the rotated token so it can be stored again.
+- `XeroClient::isolated_with_token(token)` gives one connection its own token manager while sharing the
+  connection pool, rate limiter, endpoints and attempt observer, so concurrent jobs for different tenants
+  never share a token. Attach that connection's persistence hook to the new client's `token_manager`.
+- `XeroClient::with_endpoints(XeroEndpoints::new(api, identity, login))` points every API family, the
+  token, revocation and consent endpoints and `/connections` at another host, such as a local stand-in.
+
 ## Project Structure
 
 ```

@@ -706,7 +706,10 @@ mod tests {
             let parsed: JobDocumentsResponse =
                 quick_xml::de::from_str(xml).expect("a documents response");
             assert_eq!(parsed.items().len(), 1);
-            assert_eq!(parsed.items()[0].title.as_deref(), Some("Engagement letter"));
+            assert_eq!(
+                parsed.items()[0].title.as_deref(),
+                Some("Engagement letter")
+            );
         }
     }
 }

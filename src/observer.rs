@@ -74,8 +74,11 @@ impl Attempt {
 }
 
 /// The observer installed on a token manager, shared by every client built on it.
-#[derive(Default)]
-pub(crate) struct ObserverSlot(RwLock<Option<Arc<dyn AttemptObserver>>>);
+///
+/// Cloning shares the slot, so a manager derived for other endpoints or for one connection reports
+/// to the same observer, including one installed after it was derived.
+#[derive(Default, Clone)]
+pub(crate) struct ObserverSlot(Arc<RwLock<Option<Arc<dyn AttemptObserver>>>>);
 
 impl ObserverSlot {
     pub(crate) fn set(&self, observer: Arc<dyn AttemptObserver>) {
@@ -84,7 +87,11 @@ impl ObserverSlot {
 
     /// Reports `attempt` to the installed observer and to the call-scoped one, if any.
     pub(crate) fn notify(&self, attempt: &Attempt, scoped: Option<&dyn AttemptObserver>) {
-        let installed = self.0.read().unwrap_or_else(PoisonError::into_inner).clone();
+        let installed = self
+            .0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         if let Some(observer) = installed {
             observer.on_attempt(attempt);
         }

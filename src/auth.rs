@@ -9,8 +9,10 @@
 //!   authorize redirect, and presents the verifier when exchanging the code.
 //!   Construct with [`TokenManager::new_pkce`].
 
-use crate::error::{provider_error, DecodeError, Service, XeroError};
+use crate::client::XeroEndpoints;
+use crate::error::{provider_error, DecodeError, Service, TokenNotPersisted, XeroError};
 use crate::observer::{Attempt, AttemptKind, AttemptObserver, ObserverSlot};
+use async_trait::async_trait;
 use base64::Engine;
 use log::{debug, info, trace, warn};
 use rand::RngExt;
@@ -19,10 +21,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-const AUTHORIZE_URL: &str = "https://login.xero.com/identity/connect/authorize";
-const TOKEN_URL: &str = "https://identity.xero.com/connect/token";
-const REVOCATION_URL: &str = "https://identity.xero.com/connect/revocation";
 
 /// Reads a token endpoint answer. A decode failure keeps no body: it would hold the tokens.
 async fn read_token_set(response: reqwest::Response) -> Result<TokenSet, XeroError> {
@@ -52,13 +50,49 @@ impl TokenSet {
     }
 }
 
+/// Hook invoked whenever the [`TokenManager`] obtains a rotated [`TokenSet`] from a successful
+/// refresh.
+///
+/// Xero rotates the refresh token on every refresh and the old one stops working. The in-memory
+/// cache is discarded when a per-request client is dropped, so a caller that keeps tokens in
+/// durable storage (a database row) implements this to save the rotated token; otherwise the next
+/// job loads a refresh token Xero has already invalidated. Attach one with
+/// [`TokenManager::set_persistence`].
+#[async_trait]
+pub trait TokenPersistence: Send + Sync {
+    /// Called after a successful token refresh, with the freshly rotated token.
+    ///
+    /// Return an error when the token could not be stored. The refresh then fails with
+    /// [`XeroError::TokenNotPersisted`], which still carries the rotated token so the caller can
+    /// try to store it again, and the manager's in-memory cache keeps it, so this process can go
+    /// on using it. Retrying the refresh would not help: Xero has already invalidated the old
+    /// refresh token.
+    async fn on_refreshed(&self, token: &TokenSet) -> Result<(), PersistenceError>;
+}
+
+/// Why a [`TokenPersistence`] hook could not store a token.
+pub type PersistenceError = Box<dyn std::error::Error + Send + Sync>;
+
+/// A persistence hook slot. Cloning shares it, so a hook attached after the clone reaches both.
+type PersistenceSlot = Arc<std::sync::Mutex<Option<Arc<dyn TokenPersistence>>>>;
+
 /// Selects how the [`TokenManager`] authenticates against the token endpoint.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum AuthMode {
     /// Standard authorization code flow with a client secret.
     Code { client_secret: String },
     /// PKCE flow: no client secret, `client_id` carried in the request body.
     Pkce,
+}
+
+impl std::fmt::Debug for AuthMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The client secret is never printed.
+        f.write_str(match self {
+            Self::Code { .. } => "Code",
+            Self::Pkce => "Pkce",
+        })
+    }
 }
 
 /// A PKCE code verifier paired with its derived `S256` challenge.
@@ -75,16 +109,31 @@ pub struct PkceCodes {
 }
 
 /// Manages OAuth 2.0 tokens, including fetching, caching, and refreshing.
-#[derive(Debug)]
 pub struct TokenManager {
     http_client: Client,
     client_id: String,
     redirect_uri: String,
     auth_mode: AuthMode,
     cached_token: Arc<Mutex<Option<TokenSet>>>,
-    token_url: String,
-    revocation_url: String,
+    /// Optional durable-persistence hook fired after every successful refresh. `None` by default;
+    /// set with [`Self::set_persistence`]. Behind a mutex so it can be attached to an `Arc`-shared
+    /// manager, and shared with managers derived by [`Self::with_endpoints`].
+    persistence: PersistenceSlot,
+    /// Where the identity and login endpoints live (production by default).
+    endpoints: XeroEndpoints,
     observer: ObserverSlot,
+}
+
+impl std::fmt::Debug for TokenManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Neither the cached token nor the client secret is printed.
+        f.debug_struct("TokenManager")
+            .field("redirect_uri", &self.redirect_uri)
+            .field("auth_mode", &self.auth_mode)
+            .field("has_persistence", &self.persistence_hook().is_some())
+            .field("endpoints", &self.endpoints)
+            .finish_non_exhaustive()
+    }
 }
 
 impl TokenManager {
@@ -102,8 +151,8 @@ impl TokenManager {
             redirect_uri,
             auth_mode: AuthMode::Code { client_secret },
             cached_token: Arc::new(Mutex::new(None)),
-            token_url: TOKEN_URL.to_owned(),
-            revocation_url: REVOCATION_URL.to_owned(),
+            persistence: PersistenceSlot::default(),
+            endpoints: XeroEndpoints::default(),
             observer: ObserverSlot::default(),
         }
     }
@@ -121,20 +170,59 @@ impl TokenManager {
             redirect_uri,
             auth_mode: AuthMode::Pkce,
             cached_token: Arc::new(Mutex::new(None)),
-            token_url: TOKEN_URL.to_owned(),
-            revocation_url: REVOCATION_URL.to_owned(),
+            persistence: PersistenceSlot::default(),
+            endpoints: XeroEndpoints::default(),
             observer: ObserverSlot::default(),
         }
     }
 
-    /// Points the token and revocation endpoints at `base` (`{base}/connect/token`). Meant for
-    /// tests against a local server.
-    #[cfg(test)]
-    pub(crate) fn with_identity_base_url(mut self, base: &str) -> Self {
-        let base = base.trim_end_matches('/');
-        self.token_url = format!("{base}/connect/token");
-        self.revocation_url = format!("{base}/connect/revocation");
-        self
+    /// The same manager talking to `endpoints`. The credentials, the cached token, the persistence
+    /// hook and the attempt observer are shared with `self`.
+    #[must_use]
+    pub fn with_endpoints(&self, endpoints: XeroEndpoints) -> Self {
+        Self {
+            http_client: self.http_client.clone(),
+            client_id: self.client_id.clone(),
+            redirect_uri: self.redirect_uri.clone(),
+            auth_mode: self.auth_mode.clone(),
+            cached_token: Arc::clone(&self.cached_token),
+            persistence: Arc::clone(&self.persistence),
+            endpoints,
+            observer: self.observer.clone(),
+        }
+    }
+
+    /// A manager with the same credentials, endpoints and attempt observer but its own empty token
+    /// cache and no persistence hook, for a per-connection client.
+    #[must_use]
+    pub(crate) fn isolated(&self) -> Self {
+        Self {
+            http_client: self.http_client.clone(),
+            client_id: self.client_id.clone(),
+            redirect_uri: self.redirect_uri.clone(),
+            auth_mode: self.auth_mode.clone(),
+            cached_token: Arc::new(Mutex::new(None)),
+            persistence: PersistenceSlot::default(),
+            endpoints: self.endpoints.clone(),
+            observer: self.observer.clone(),
+        }
+    }
+
+    /// Attaches a [`TokenPersistence`] hook fired after every successful token refresh, replacing
+    /// any earlier one. It can be set on an `Arc`-shared manager, such as the `token_manager` of a
+    /// client from [`crate::client::XeroClient::isolated_with_token`].
+    pub fn set_persistence(&self, persistence: Arc<dyn TokenPersistence>) {
+        *self
+            .persistence
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(persistence);
+    }
+
+    fn persistence_hook(&self) -> Option<Arc<dyn TokenPersistence>> {
+        self.persistence
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Installs an observer told about every request this manager sends, token refreshes
@@ -185,17 +273,14 @@ impl TokenManager {
     #[must_use]
     pub fn get_authorization_url(&self, scopes: &[&str], state: &str) -> String {
         let scope_str = scopes.join(" ");
-        use url::Url;
-
-        let mut url = Url::parse(AUTHORIZE_URL).unwrap();
-        url.query_pairs_mut()
+        let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("response_type", "code")
             .append_pair("client_id", &self.client_id)
             .append_pair("redirect_uri", &self.redirect_uri)
             .append_pair("scope", &scope_str)
-            .append_pair("state", state);
-
-        url.to_string()
+            .append_pair("state", state)
+            .finish();
+        format!("{}?{query}", self.endpoints.authorize_url())
     }
 
     /// Generates the authorization URL for the PKCE flow.
@@ -211,28 +296,22 @@ impl TokenManager {
         code_challenge: &str,
     ) -> String {
         let scope_str = scopes.join(" ");
-        use url::Url;
-
-        let mut url = Url::parse(AUTHORIZE_URL).unwrap();
-        url.query_pairs_mut()
+        let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("response_type", "code")
             .append_pair("client_id", &self.client_id)
             .append_pair("redirect_uri", &self.redirect_uri)
             .append_pair("scope", &scope_str)
             .append_pair("state", state)
             .append_pair("code_challenge", code_challenge)
-            .append_pair("code_challenge_method", "S256");
-
-        url.to_string()
+            .append_pair("code_challenge_method", "S256")
+            .finish();
+        format!("{}?{query}", self.endpoints.authorize_url())
     }
 
     /// Builds a POST request to the token endpoint with the right auth shape
     /// for this manager's mode. For PKCE, `client_id` is appended to `params`.
-    fn token_request<'a>(
-        &'a self,
-        mut params: Vec<(&'a str, &'a str)>,
-    ) -> reqwest::RequestBuilder {
-        let req = self.http_client.post(&self.token_url);
+    fn token_request<'a>(&'a self, mut params: Vec<(&'a str, &'a str)>) -> reqwest::RequestBuilder {
+        let req = self.http_client.post(self.endpoints.token_url());
         match &self.auth_mode {
             AuthMode::Code { client_secret } => req
                 .basic_auth(&self.client_id, Some(client_secret))
@@ -379,6 +458,18 @@ impl TokenManager {
                         } else {
                             info!("Successfully refreshed token set.");
                         }
+                        // Xero has already invalidated the old refresh token, so hand the new one
+                        // to the caller's store before returning. The hook is cloned out first so
+                        // the std mutex is not held across the await.
+                        if let Some(persistence) = self.persistence_hook() {
+                            if let Err(source) = persistence.on_refreshed(&new_token_set).await {
+                                warn!("The persistence hook could not store the refreshed token.");
+                                return Err(XeroError::TokenNotPersisted(TokenNotPersisted::new(
+                                    new_token_set,
+                                    source,
+                                )));
+                            }
+                        }
                         return Ok(new_token_set);
                     }
 
@@ -410,8 +501,10 @@ impl TokenManager {
             }
 
             // Sleep before the next retry (skip sleep after the last attempt).
-            if attempt < max_attempts - 1 {
-                let delay = backoff_ms[attempt];
+            if let Some(&delay) = backoff_ms
+                .get(attempt)
+                .filter(|_| attempt < max_attempts - 1)
+            {
                 debug!("Retrying token refresh in {delay}ms");
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
             }
@@ -460,7 +553,7 @@ impl TokenManager {
     /// (`base64(client_id + ":")`), which `reqwest::basic_auth` produces when
     /// passed `Some("")`.
     pub async fn revoke_token(&self, refresh_token: &str) -> Result<(), XeroError> {
-        let req = self.http_client.post(&self.revocation_url);
+        let req = self.http_client.post(self.endpoints.revocation_url());
         let req = match &self.auth_mode {
             AuthMode::Code { client_secret } => {
                 req.basic_auth(&self.client_id, Some(client_secret))
@@ -478,7 +571,6 @@ impl TokenManager {
             Err(provider_error(Service::Identity, response).await)
         }
     }
-
 
     /// Retrieves the current valid access token, refreshing it if necessary.
     pub async fn get_access_token(&self) -> Result<String, XeroError> {
@@ -535,6 +627,66 @@ impl TokenManager {
 mod tests {
     use super::*;
 
+    /// A rebased manager sends its consent link and token exchange to the configured hosts, so a
+    /// local stand-in sees them instead of Xero.
+    #[test]
+    fn configured_endpoints_replace_production() {
+        let tm = TokenManager::new(Client::new(), "id".into(), "secret".into(), "cb".into())
+            .with_endpoints(XeroEndpoints::new(
+                "http://127.0.0.1:4010/xero/",
+                "http://127.0.0.1:4010/xero-identity",
+                "http://127.0.0.1:4010/xero-login",
+            ));
+        let url = tm.get_authorization_url(&["openid", "offline_access"], "s1");
+        assert!(
+            url.starts_with("http://127.0.0.1:4010/xero-login/identity/connect/authorize?"),
+            "{url}"
+        );
+        assert!(url.contains("scope=openid+offline_access"), "{url}");
+        assert_eq!(
+            tm.endpoints.token_url(),
+            "http://127.0.0.1:4010/xero-identity/connect/token"
+        );
+        assert_eq!(
+            TokenManager::new(Client::new(), "id".into(), "s".into(), "cb".into())
+                .get_authorization_url(&["openid"], "s1")
+                .split('?')
+                .next(),
+            Some("https://login.xero.com/identity/connect/authorize")
+        );
+    }
+
+    struct NoStore;
+
+    #[async_trait]
+    impl TokenPersistence for NoStore {
+        async fn on_refreshed(&self, _token: &TokenSet) -> Result<(), PersistenceError> {
+            Ok(())
+        }
+    }
+
+    /// A hook attached after the manager was rebased still reaches the rebased copy, because the
+    /// two share one slot; an isolated manager starts with none.
+    #[test]
+    fn a_rebased_manager_shares_the_persistence_slot() {
+        let tm = TokenManager::new(Client::new(), "id".into(), "s".into(), "cb".into());
+        let rebased = tm.with_endpoints(XeroEndpoints::default());
+        tm.set_persistence(Arc::new(NoStore));
+        assert!(rebased.persistence_hook().is_some());
+        assert!(tm.isolated().persistence_hook().is_none());
+    }
+
+    #[test]
+    fn debug_never_prints_the_client_secret() {
+        let tm = TokenManager::new(
+            Client::new(),
+            "id".into(),
+            "very-secret-value".into(),
+            "cb".into(),
+        );
+        assert!(!format!("{tm:?}").contains("very-secret-value"));
+    }
+
     /// RFC 7636 Appendix B test vector.
     #[test]
     fn challenge_matches_rfc7636_vector() {
@@ -560,7 +712,10 @@ mod tests {
         }
 
         // Challenge must be the deterministic SHA256/base64url of the verifier.
-        assert_eq!(codes.challenge, TokenManager::challenge_for(&codes.verifier));
+        assert_eq!(
+            codes.challenge,
+            TokenManager::challenge_for(&codes.verifier)
+        );
     }
 
     #[test]

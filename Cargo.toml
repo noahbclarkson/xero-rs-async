@@ -18,6 +18,7 @@ path = "src/bin/auth.rs"
 required-features = ["auth-cli"]
 
 [dependencies]
+async-trait = "0.1"
 chrono = { version = "0.4.44", features = ["serde"] }
 reqwest = { version = "0.13", default-features = false, features = ["form", "json", "multipart", "query", "rustls"] }
 serde = { version = "1.0", features = ["derive"] }

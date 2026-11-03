@@ -38,8 +38,9 @@ pub struct AssetTypeBookDepreciationSetting {
     pub averaging_method: Option<AveragingMethod>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depreciation_rate: Option<f64>,
+    /// Years, and not always whole ones: Australian effective lives such as 6.67 years are common.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub effective_life_years: Option<u32>,
+    pub effective_life_years: Option<f64>,
     #[serde(default)]
     pub depreciation_calculation_method: Option<DepreciationCalculationMethod>,
 }

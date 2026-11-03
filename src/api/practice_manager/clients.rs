@@ -1,6 +1,6 @@
 //! API resource for XPM Clients (Practice Manager v3.1).
 
-use super::PracticeManagerApi;
+use super::{PracticeManagerApi, BULK_LIST_TIMEOUT};
 use crate::error::XeroError;
 use crate::models::practice_manager::client::{
     ClientPaginatedResponse, ClientResponse, ClientsResponse, ContactResponse, ContactsResponse,
@@ -46,7 +46,7 @@ impl<'a> ClientsResource<'a> {
         };
         self.api
             .client
-            .send_request_xml(Method::GET, "/client.api/list", q)
+            .send_request_xml_with_timeout(Method::GET, "/client.api/list", q, BULK_LIST_TIMEOUT)
             .await
     }
 
