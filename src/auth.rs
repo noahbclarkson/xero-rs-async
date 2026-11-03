@@ -10,7 +10,7 @@
 //!   Construct with [`TokenManager::new_pkce`].
 
 use crate::client::XeroEndpoints;
-use crate::error::{provider_error, DecodeError, Service, XeroError};
+use crate::error::{provider_error, DecodeError, Service, TokenNotPersisted, XeroError};
 use crate::observer::{Attempt, AttemptKind, AttemptObserver, ObserverSlot};
 use async_trait::async_trait;
 use base64::Engine;
@@ -61,8 +61,20 @@ impl TokenSet {
 #[async_trait]
 pub trait TokenPersistence: Send + Sync {
     /// Called after a successful token refresh, with the freshly rotated token.
-    async fn on_refreshed(&self, token: &TokenSet);
+    ///
+    /// Return an error when the token could not be stored. The refresh then fails with
+    /// [`XeroError::TokenNotPersisted`], which still carries the rotated token so the caller can
+    /// try to store it again, and the manager's in-memory cache keeps it, so this process can go
+    /// on using it. Retrying the refresh would not help: Xero has already invalidated the old
+    /// refresh token.
+    async fn on_refreshed(&self, token: &TokenSet) -> Result<(), PersistenceError>;
 }
+
+/// Why a [`TokenPersistence`] hook could not store a token.
+pub type PersistenceError = Box<dyn std::error::Error + Send + Sync>;
+
+/// A persistence hook slot. Cloning shares it, so a hook attached after the clone reaches both.
+type PersistenceSlot = Arc<std::sync::Mutex<Option<Arc<dyn TokenPersistence>>>>;
 
 /// Selects how the [`TokenManager`] authenticates against the token endpoint.
 #[derive(Clone)]
@@ -105,8 +117,8 @@ pub struct TokenManager {
     cached_token: Arc<Mutex<Option<TokenSet>>>,
     /// Optional durable-persistence hook fired after every successful refresh. `None` by default;
     /// set with [`Self::set_persistence`]. Behind a mutex so it can be attached to an `Arc`-shared
-    /// manager.
-    persistence: std::sync::Mutex<Option<Arc<dyn TokenPersistence>>>,
+    /// manager, and shared with managers derived by [`Self::with_endpoints`].
+    persistence: PersistenceSlot,
     /// Where the identity and login endpoints live (production by default).
     endpoints: XeroEndpoints,
     observer: ObserverSlot,
@@ -139,7 +151,7 @@ impl TokenManager {
             redirect_uri,
             auth_mode: AuthMode::Code { client_secret },
             cached_token: Arc::new(Mutex::new(None)),
-            persistence: std::sync::Mutex::new(None),
+            persistence: PersistenceSlot::default(),
             endpoints: XeroEndpoints::default(),
             observer: ObserverSlot::default(),
         }
@@ -158,7 +170,7 @@ impl TokenManager {
             redirect_uri,
             auth_mode: AuthMode::Pkce,
             cached_token: Arc::new(Mutex::new(None)),
-            persistence: std::sync::Mutex::new(None),
+            persistence: PersistenceSlot::default(),
             endpoints: XeroEndpoints::default(),
             observer: ObserverSlot::default(),
         }
@@ -174,7 +186,7 @@ impl TokenManager {
             redirect_uri: self.redirect_uri.clone(),
             auth_mode: self.auth_mode.clone(),
             cached_token: Arc::clone(&self.cached_token),
-            persistence: std::sync::Mutex::new(self.persistence_hook()),
+            persistence: Arc::clone(&self.persistence),
             endpoints,
             observer: self.observer.clone(),
         }
@@ -190,7 +202,7 @@ impl TokenManager {
             redirect_uri: self.redirect_uri.clone(),
             auth_mode: self.auth_mode.clone(),
             cached_token: Arc::new(Mutex::new(None)),
-            persistence: std::sync::Mutex::new(None),
+            persistence: PersistenceSlot::default(),
             endpoints: self.endpoints.clone(),
             observer: self.observer.clone(),
         }
@@ -450,7 +462,13 @@ impl TokenManager {
                         // to the caller's store before returning. The hook is cloned out first so
                         // the std mutex is not held across the await.
                         if let Some(persistence) = self.persistence_hook() {
-                            persistence.on_refreshed(&new_token_set).await;
+                            if let Err(source) = persistence.on_refreshed(&new_token_set).await {
+                                warn!("The persistence hook could not store the refreshed token.");
+                                return Err(XeroError::TokenNotPersisted(TokenNotPersisted::new(
+                                    new_token_set,
+                                    source,
+                                )));
+                            }
                         }
                         return Ok(new_token_set);
                     }
@@ -636,6 +654,26 @@ mod tests {
                 .next(),
             Some("https://login.xero.com/identity/connect/authorize")
         );
+    }
+
+    struct NoStore;
+
+    #[async_trait]
+    impl TokenPersistence for NoStore {
+        async fn on_refreshed(&self, _token: &TokenSet) -> Result<(), PersistenceError> {
+            Ok(())
+        }
+    }
+
+    /// A hook attached after the manager was rebased still reaches the rebased copy, because the
+    /// two share one slot; an isolated manager starts with none.
+    #[test]
+    fn a_rebased_manager_shares_the_persistence_slot() {
+        let tm = TokenManager::new(Client::new(), "id".into(), "s".into(), "cb".into());
+        let rebased = tm.with_endpoints(XeroEndpoints::default());
+        tm.set_persistence(Arc::new(NoStore));
+        assert!(rebased.persistence_hook().is_some());
+        assert!(tm.isolated().persistence_hook().is_none());
     }
 
     #[test]

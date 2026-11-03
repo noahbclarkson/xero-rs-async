@@ -12,6 +12,8 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::auth::{PersistenceError, TokenSet};
+
 /// A provider response body, kept reachable but never printed.
 ///
 /// `Debug` shows only the length, so deriving `Debug` on an error that holds one cannot leak it.
@@ -188,6 +190,63 @@ impl fmt::Display for DecodeError {
 
 impl std::error::Error for DecodeError {}
 
+/// A token refresh succeeded but the [`crate::auth::TokenPersistence`] hook could not store the
+/// rotated token.
+///
+/// Xero has already invalidated the previous refresh token, so the rotated one is kept here: store
+/// it again with [`Self::token`] or [`Self::into_token`], or the connection has to be authorised
+/// afresh. `Debug` and `Display` never print the token.
+pub struct TokenNotPersisted {
+    token: Box<TokenSet>,
+    source: PersistenceError,
+}
+
+impl TokenNotPersisted {
+    pub(crate) fn new(token: TokenSet, source: PersistenceError) -> Self {
+        Self {
+            token: Box::new(token),
+            source,
+        }
+    }
+
+    /// The rotated token the hook failed to store. It is a credential: do not log it.
+    #[must_use]
+    pub fn token(&self) -> &TokenSet {
+        &self.token
+    }
+
+    /// Takes the rotated token the hook failed to store.
+    #[must_use]
+    pub fn into_token(self) -> TokenSet {
+        *self.token
+    }
+}
+
+impl fmt::Debug for TokenNotPersisted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenNotPersisted")
+            .field("token", &"[REDACTED]")
+            .field("source", &self.source)
+            .finish()
+    }
+}
+
+impl fmt::Display for TokenNotPersisted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "the refreshed token could not be stored: {}",
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for TokenNotPersisted {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
 /// Represents all possible errors that can occur when interacting with the Xero API.
 ///
 /// None of the variants prints a response body; see [`XeroError::response_body`].
@@ -218,6 +277,11 @@ pub enum XeroError {
     /// A local authentication problem: no token yet, or the wrong flow for this manager.
     #[error("Authentication error: {0}")]
     Auth(String),
+
+    /// A token refresh succeeded but the persistence hook could not store the rotated token, which
+    /// the error still carries.
+    #[error("{0}")]
+    TokenNotPersisted(TokenNotPersisted),
 
     /// The local rate limiter refused to send the request.
     #[error("Rate limiter error: {0}")]
@@ -260,6 +324,9 @@ pub enum ErrorKind {
     Transport,
     /// A response arrived that could not be decoded, or a local read or write failed.
     InvalidResponse,
+    /// A refresh succeeded but the persistence hook could not store the rotated token. See
+    /// [`XeroError::TokenNotPersisted`].
+    TokenNotPersisted,
 }
 
 impl XeroError {
@@ -278,6 +345,7 @@ impl XeroError {
             Self::Request(error) => error.status().map_or(ErrorKind::Transport, kind_of_status),
             Self::RateLimiter(_) => ErrorKind::DailyLimit,
             Self::Auth(_) => ErrorKind::Rejected,
+            Self::TokenNotPersisted(_) => ErrorKind::TokenNotPersisted,
             Self::Serde(_) | Self::Decode(_) | Self::Io(_) => ErrorKind::InvalidResponse,
         }
     }

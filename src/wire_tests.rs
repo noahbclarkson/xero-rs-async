@@ -10,7 +10,7 @@ use uuid::Uuid;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use crate::auth::{TokenPersistence, TokenSet};
+use crate::auth::{PersistenceError, TokenPersistence, TokenSet};
 use crate::client::{XeroClient, XeroEndpoints};
 use crate::error::{ErrorKind, XeroError};
 use crate::http::ApiClient;
@@ -306,11 +306,12 @@ struct SavedTokens(Mutex<Vec<String>>);
 
 #[async_trait::async_trait]
 impl TokenPersistence for SavedTokens {
-    async fn on_refreshed(&self, token: &TokenSet) {
+    async fn on_refreshed(&self, token: &TokenSet) -> Result<(), PersistenceError> {
         self.0
             .lock()
             .expect("saved tokens")
             .push(token.refresh_token.clone().unwrap_or_default());
+        Ok(())
     }
 }
 
@@ -353,4 +354,62 @@ async fn an_isolated_client_hands_a_rotated_token_to_its_own_store_only() {
     assert_eq!(recorder.kinds(), vec![AttemptKind::TokenRefresh]);
     // The shared client never saw the per-connection token.
     assert!(shared.token_manager.get_access_token().await.is_err());
+}
+
+struct BrokenStore;
+
+#[async_trait::async_trait]
+impl TokenPersistence for BrokenStore {
+    async fn on_refreshed(&self, _token: &TokenSet) -> Result<(), PersistenceError> {
+        Err("the database is unavailable".into())
+    }
+}
+
+/// A rotated token the caller's store refused is reported, not swallowed, and is not lost: the
+/// error carries it, the cache keeps it, and the refresh is not repeated against a refresh token
+/// Xero has already invalidated.
+#[tokio::test]
+async fn a_token_the_store_refused_fails_the_refresh_but_is_kept() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let shared = client_for(&server).await;
+    let expired = TokenSet {
+        obtained_at: chrono::Utc::now() - chrono::Duration::hours(2),
+        ..stored_token()
+    };
+    let client = shared.isolated_with_token(expired).await;
+    client.token_manager.set_persistence(Arc::new(BrokenStore));
+
+    let error = client
+        .token_manager
+        .get_access_token()
+        .await
+        .expect_err("the store refused the token");
+
+    assert_eq!(error.kind(), ErrorKind::TokenNotPersisted);
+    for rendered in [error.to_string(), format!("{error:?}")] {
+        assert!(!rendered.contains("new-refresh"), "{rendered}");
+        assert!(!rendered.contains("new-access"), "{rendered}");
+    }
+    let XeroError::TokenNotPersisted(unsaved) = error else {
+        panic!("expected TokenNotPersisted");
+    };
+    assert_eq!(
+        unsaved.token().refresh_token.as_deref(),
+        Some("new-refresh")
+    );
+    // The process keeps working on the cached token without asking Xero again.
+    assert_eq!(
+        client
+            .token_manager
+            .get_access_token()
+            .await
+            .expect("cached"),
+        "new-access"
+    );
 }
