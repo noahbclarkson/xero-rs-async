@@ -27,15 +27,89 @@ use log::{debug, info};
 use reqwest::Client;
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
-const CONNECTIONS_URL: &str = "https://api.xero.com/connections";
+/// The most a request to Xero may take in all, unless the call names its own budget.
+///
+/// Well above Xero's usual response time, so healthy traffic is never cut, but finite: without it a
+/// stalled endpoint holds the caller's task, and its rate-limit permit, indefinitely.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a request may take to connect. A dead upstream surfaces quickly.
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Builds the `reqwest::Client` every Xero request is sent with, timeouts included.
+fn build_http_client() -> Result<Client, XeroError> {
+    Client::builder()
+        .timeout(DEFAULT_TIMEOUT)
+        .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
+        .build()
+        .map_err(XeroError::from)
+}
+
+/// Where the Xero services live. Defaults to production; a test or demo stack points them at a
+/// local stand-in with [`XeroClient::with_endpoints`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XeroEndpoints {
+    /// The API host every API family hangs off (`/api.xro/2.0`, `/connections`, ...).
+    pub api: String,
+    /// The identity host (token and revocation endpoints).
+    pub identity: String,
+    /// The login host (the consent page).
+    pub login: String,
+}
+
+impl Default for XeroEndpoints {
+    fn default() -> Self {
+        Self {
+            api: "https://api.xero.com".to_owned(),
+            identity: "https://identity.xero.com".to_owned(),
+            login: "https://login.xero.com".to_owned(),
+        }
+    }
+}
+
+impl XeroEndpoints {
+    /// Endpoints with the given hosts; a trailing `/` on any is ignored.
+    #[must_use]
+    pub fn new(api: &str, identity: &str, login: &str) -> Self {
+        let trim = |s: &str| s.trim_end_matches('/').to_owned();
+        Self {
+            api: trim(api),
+            identity: trim(identity),
+            login: trim(login),
+        }
+    }
+
+    /// `path` (starting with `/`) on the API host.
+    #[must_use]
+    pub fn api_url(&self, path: &str) -> String {
+        format!("{}{path}", self.api)
+    }
+
+    pub(crate) fn connections_url(&self) -> String {
+        self.api_url("/connections")
+    }
+
+    pub(crate) fn token_url(&self) -> String {
+        format!("{}/connect/token", self.identity)
+    }
+
+    pub(crate) fn revocation_url(&self) -> String {
+        format!("{}/connect/revocation", self.identity)
+    }
+
+    pub(crate) fn authorize_url(&self) -> String {
+        format!("{}/identity/connect/authorize", self.login)
+    }
+}
 
 /// How long a connection DELETE may take to connect.
-const CONNECTIONS_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const CONNECTIONS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long a connection DELETE may take in all.
-const CONNECTIONS_DELETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const CONNECTIONS_DELETE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Represents a Xero tenant connection.
 #[derive(Debug, Clone, Deserialize)]
@@ -56,7 +130,7 @@ pub struct XeroClient {
     /// Never follows a redirect: a connection DELETE carries a bearer token and must go to the
     /// one URL it names.
     connections_client: Client,
-    connections_url: String,
+    pub(crate) endpoints: XeroEndpoints,
 }
 
 /// A tenant-bound client that vends API handles without requiring tenant IDs per call.
@@ -211,15 +285,41 @@ impl XeroClient {
             token_manager,
             rate_limiter,
             connections_client,
-            connections_url: CONNECTIONS_URL.to_owned(),
+            endpoints: XeroEndpoints::default(),
         }
     }
 
-    /// Points the `/connections` calls at `url`. Meant for tests against a local server.
-    #[cfg(test)]
-    pub(crate) fn with_connections_url(mut self, url: &str) -> Self {
-        self.connections_url = url.trim_end_matches('/').to_owned();
+    /// The same client talking to `endpoints` instead of production. The token cache, the
+    /// persistence hook and the attempt observer carry over.
+    #[must_use]
+    pub fn with_endpoints(mut self, endpoints: XeroEndpoints) -> Self {
+        self.token_manager = Arc::new(self.token_manager.with_endpoints(endpoints.clone()));
+        self.endpoints = endpoints;
         self
+    }
+
+    /// The endpoints this client calls.
+    #[must_use]
+    pub fn endpoints(&self) -> &XeroEndpoints {
+        &self.endpoints
+    }
+
+    /// A client with this one's credentials, endpoints, connection pool, rate limiter and attempt
+    /// observer, but its own token manager seeded with `token` and no persistence hook.
+    ///
+    /// This is the per-connection client: concurrent jobs for different tenants never share a
+    /// token. Attach a [`crate::auth::TokenPersistence`] to its `token_manager` so a refresh that
+    /// rotates the token mid-job is saved.
+    pub async fn isolated_with_token(&self, token: TokenSet) -> Self {
+        let token_manager = Arc::new(self.token_manager.isolated());
+        token_manager.set_token(&token).await;
+        Self {
+            http_client: self.http_client.clone(),
+            token_manager,
+            rate_limiter: Arc::clone(&self.rate_limiter),
+            connections_client: self.connections_client.clone(),
+            endpoints: self.endpoints.clone(),
+        }
     }
 
     /// Installs an observer told about every HTTP request this client sends: tenant API calls,
@@ -246,7 +346,7 @@ impl XeroClient {
         rate_limiter: Arc<RateLimiter>,
     ) -> Result<Self, XeroError> {
         debug!("Creating new XeroClient instance.");
-        let http_client = Client::new();
+        let http_client = build_http_client()?;
         let token_manager = Arc::new(TokenManager::new(
             http_client.clone(),
             client_id,
@@ -275,7 +375,7 @@ impl XeroClient {
         rate_limiter: Arc<RateLimiter>,
     ) -> Result<Self, XeroError> {
         debug!("Creating new XeroClient instance (PKCE).");
-        let http_client = Client::new();
+        let http_client = build_http_client()?;
         let token_manager = Arc::new(TokenManager::new_pkce(
             http_client.clone(),
             client_id,
@@ -297,7 +397,7 @@ impl XeroClient {
         initial_token: TokenSet,
     ) -> Result<Self, XeroError> {
         debug!("Creating new XeroClient instance (PKCE) with pre-seeded token.");
-        let http_client = Client::new();
+        let http_client = build_http_client()?;
         let token_manager = Arc::new(TokenManager::new_pkce(
             http_client.clone(),
             client_id,
@@ -329,7 +429,7 @@ impl XeroClient {
         initial_token: TokenSet,
     ) -> Result<Self, XeroError> {
         debug!("Creating new XeroClient instance with pre-seeded token.");
-        let http_client = Client::new();
+        let http_client = build_http_client()?;
         let token_manager = Arc::new(TokenManager::new(
             http_client.clone(),
             client_id,
@@ -355,7 +455,7 @@ impl XeroClient {
     ) -> Result<Vec<Connection>, XeroError> {
         let request = self
             .http_client
-            .get(&self.connections_url)
+            .get(self.endpoints.connections_url())
             .bearer_auth(access_token)
             .header("Accept", "application/json");
         self.token_manager
@@ -387,7 +487,10 @@ impl XeroClient {
     ) -> Result<(), XeroError> {
         let request = self
             .connections_client
-            .delete(format!("{}/{connection_id}", self.connections_url))
+            .delete(format!(
+                "{}/{connection_id}",
+                self.endpoints.connections_url()
+            ))
             .bearer_auth(access_token)
             .header("Accept", "application/json")
             .timeout(CONNECTIONS_DELETE_TIMEOUT);
