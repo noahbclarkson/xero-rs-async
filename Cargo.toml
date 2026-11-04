@@ -37,6 +37,7 @@ quick-xml = { version = "0.41", features = ["serialize"] }
 sha2 = "0.11"
 base64 = "0.22"
 rand = "0.10"
+zeroize = "1.8"
 
 [features]
 default = ["accounting"]

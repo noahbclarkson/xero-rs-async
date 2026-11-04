@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use zeroize::Zeroize;
 
 /// Reads a token endpoint answer. A decode failure keeps no body: it would hold the tokens.
 async fn read_token_set(response: reqwest::Response) -> Result<TokenSet, XeroError> {
@@ -29,7 +30,12 @@ async fn read_token_set(response: reqwest::Response) -> Result<TokenSet, XeroErr
         .map_err(|error| XeroError::Decode(DecodeError::json_redacted(&error, text.len())))
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+/// An OAuth 2.0 token set.
+///
+/// `Debug` prints no token. [`Zeroize`] wipes the tokens: the manager does that to the copy it
+/// caches, and a caller holding its own copy can call `zeroize()` when done with it. It is not done
+/// on drop, so the fields stay movable and struct-update syntax keeps working.
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct TokenSet {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -38,6 +44,28 @@ pub struct TokenSet {
     pub token_type: String,
     #[serde(default = "chrono::Utc::now")]
     pub obtained_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl std::fmt::Debug for TokenSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted = |token: &Option<String>| token.as_ref().map(|_| "[REDACTED]");
+        f.debug_struct("TokenSet")
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &redacted(&self.refresh_token))
+            .field("id_token", &redacted(&self.id_token))
+            .field("expires_in", &self.expires_in)
+            .field("token_type", &self.token_type)
+            .field("obtained_at", &self.obtained_at)
+            .finish()
+    }
+}
+
+impl Zeroize for TokenSet {
+    fn zeroize(&mut self) {
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+        self.id_token.zeroize();
+    }
 }
 
 impl TokenSet {
@@ -85,6 +113,14 @@ enum AuthMode {
     Pkce,
 }
 
+impl Drop for AuthMode {
+    fn drop(&mut self) {
+        if let Self::Code { client_secret } = self {
+            client_secret.zeroize();
+        }
+    }
+}
+
 impl std::fmt::Debug for AuthMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // The client secret is never printed.
@@ -100,12 +136,30 @@ impl std::fmt::Debug for AuthMode {
 /// The caller is responsible for storing the `verifier` between the authorize
 /// redirect and the token exchange (typically alongside the `state` value in a
 /// signed cookie or session store). The library does not retain it.
-#[derive(Debug, Clone)]
+///
+/// `Debug` prints no verifier. Call `zeroize()` ([`Zeroize`]) to wipe the verifier once the code has
+/// been exchanged.
+#[derive(Clone)]
 pub struct PkceCodes {
     /// Random 43–128 char string in `[A-Z a-z 0-9 -._~]`. Keep this secret.
     pub verifier: String,
     /// `BASE64URL-NOPAD(SHA256(verifier))` — safe to send in the authorize URL.
     pub challenge: String,
+}
+
+impl std::fmt::Debug for PkceCodes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PkceCodes")
+            .field("verifier", &"[REDACTED]")
+            .field("challenge", &self.challenge)
+            .finish()
+    }
+}
+
+impl Zeroize for PkceCodes {
+    fn zeroize(&mut self) {
+        self.verifier.zeroize();
+    }
 }
 
 /// Manages OAuth 2.0 tokens, including fetching, caching, and refreshing.
@@ -133,6 +187,18 @@ impl std::fmt::Debug for TokenManager {
             .field("has_persistence", &self.persistence_hook().is_some())
             .field("endpoints", &self.endpoints)
             .finish_non_exhaustive()
+    }
+}
+
+impl Drop for TokenManager {
+    fn drop(&mut self) {
+        // The cache is shared with managers derived by `with_endpoints`; wipe it only when this is
+        // the last one holding it.
+        if let Some(cache) = Arc::get_mut(&mut self.cached_token) {
+            if let Some(token) = cache.get_mut() {
+                token.zeroize();
+            }
+        }
     }
 }
 
@@ -595,6 +661,9 @@ impl TokenManager {
     async fn save_token(&self, token_set: &TokenSet) {
         trace!("Saving token to in-memory cache");
         let mut cached_token = self.cached_token.lock().await;
+        if let Some(previous) = cached_token.as_mut() {
+            previous.zeroize();
+        }
         *cached_token = Some(token_set.clone());
         debug!("Token saved successfully to in-memory cache.");
     }
@@ -674,6 +743,45 @@ mod tests {
         tm.set_persistence(Arc::new(NoStore));
         assert!(rebased.persistence_hook().is_some());
         assert!(tm.isolated().persistence_hook().is_none());
+    }
+
+    #[test]
+    fn debug_never_prints_a_token_or_verifier() {
+        let token = TokenSet {
+            access_token: "access-secret".into(),
+            refresh_token: Some("refresh-secret".into()),
+            id_token: Some("id-secret".into()),
+            expires_in: 1800,
+            token_type: "Bearer".into(),
+            obtained_at: chrono::Utc::now(),
+        };
+        let rendered = format!("{token:?}");
+        for secret in ["access-secret", "refresh-secret", "id-secret"] {
+            assert!(!rendered.contains(secret), "{rendered}");
+        }
+        assert!(rendered.contains("Bearer"), "{rendered}");
+
+        let mut codes = TokenManager::generate_pkce();
+        let rendered = format!("{codes:?}");
+        assert!(!rendered.contains(&codes.verifier), "{rendered}");
+        assert!(rendered.contains(&codes.challenge), "{rendered}");
+
+        codes.zeroize();
+        assert!(codes.verifier.is_empty());
+    }
+
+    #[test]
+    fn zeroize_wipes_every_token() {
+        let mut token = TokenSet {
+            access_token: "a".into(),
+            refresh_token: Some("r".into()),
+            id_token: Some("i".into()),
+            ..TokenSet::default()
+        };
+        token.zeroize();
+        assert!(token.access_token.is_empty());
+        assert_eq!(token.refresh_token, None);
+        assert_eq!(token.id_token, None);
     }
 
     #[test]

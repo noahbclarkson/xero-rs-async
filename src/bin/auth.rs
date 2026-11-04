@@ -83,7 +83,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "accounting.budgets.read",
         "offline_access",
     ];
-    let state = "12345";
+    // An unpredictable state per run. A fixed value would let another page complete this
+    // utility's callback with its own authorization code (login CSRF).
+    let state = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
 
     // PKCE-only: generate verifier/challenge before building the URL.
     let pkce_codes: Option<PkceCodes> = match flow {
@@ -94,11 +96,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auth_url = match (&flow, &pkce_codes) {
         (Flow::Code, _) => xero_client
             .token_manager
-            .get_authorization_url(&scopes, state),
+            .get_authorization_url(&scopes, &state),
         (Flow::Pkce, Some(codes)) => {
             xero_client
                 .token_manager
-                .get_authorization_url_pkce(&scopes, state, &codes.challenge)
+                .get_authorization_url_pkce(&scopes, &state, &codes.challenge)
         }
         (Flow::Pkce, None) => unreachable!(),
     };
@@ -187,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get("state")
         .ok_or("State not found in callback URL")?;
 
-    if received_state != state {
+    if *received_state != state {
         return Err("State mismatch! CSRF attack may be in progress.".into());
     }
 
