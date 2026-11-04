@@ -222,7 +222,8 @@ let staff = xpm.list_staff(None).await?;
 - Every request has a 30 second total timeout and a 5 second connect timeout
   (`client::DEFAULT_TIMEOUT`, `client::DEFAULT_CONNECT_TIMEOUT`). The practice-wide XPM lists
   (`clients().list`, `client_groups().list`) get 300 seconds, because Practice Manager builds the whole
-  document before sending a byte.
+  document before sending a byte. A caller that bounds calls itself, with deadlines longer than 30 seconds,
+  raises the default with `XeroClient::with_timeout(..)`; the XPM lists then get the longer of the two.
 - Xero rotates the refresh token on every refresh. To keep tokens somewhere durable, implement
   `auth::TokenPersistence` and attach it with `TokenManager::set_persistence`; it is called with each
   rotated `TokenSet`. If it returns an error the refresh fails with `XeroError::TokenNotPersisted`,

@@ -30,6 +30,9 @@ pub(crate) const BULK_LIST_TIMEOUT: Duration = Duration::from_secs(300);
 #[derive(Debug, Clone)]
 pub struct PracticeManagerApi {
     pub(crate) client: ApiClient,
+    /// The timeout for the practice-wide lists: [`BULK_LIST_TIMEOUT`], or the client's own timeout
+    /// when that is longer, so raising the client's timeout never shortens these.
+    pub(crate) bulk_list_timeout: Duration,
 }
 
 impl PracticeManagerApi {
@@ -42,6 +45,7 @@ impl PracticeManagerApi {
                 client.token_manager.clone(),
                 client.rate_limiter.clone(),
             ),
+            bulk_list_timeout: BULK_LIST_TIMEOUT.max(client.timeout),
         }
     }
 
