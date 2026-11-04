@@ -41,8 +41,12 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Builds the `reqwest::Client` every Xero request is sent with, timeouts included.
 fn build_http_client() -> Result<Client, XeroError> {
+    http_client_with_timeout(DEFAULT_TIMEOUT)
+}
+
+fn http_client_with_timeout(timeout: Duration) -> Result<Client, XeroError> {
     Client::builder()
-        .timeout(DEFAULT_TIMEOUT)
+        .timeout(timeout)
         .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
         .build()
         .map_err(XeroError::from)
@@ -131,6 +135,8 @@ pub struct XeroClient {
     /// one URL it names.
     connections_client: Client,
     pub(crate) endpoints: XeroEndpoints,
+    /// The total timeout `http_client` was built with.
+    pub(crate) timeout: Duration,
 }
 
 /// A tenant-bound client that vends API handles without requiring tenant IDs per call.
@@ -286,7 +292,31 @@ impl XeroClient {
             rate_limiter,
             connections_client,
             endpoints: XeroEndpoints::default(),
+            timeout: DEFAULT_TIMEOUT,
         }
+    }
+
+    /// The same client with a different total timeout per request, in place of
+    /// [`DEFAULT_TIMEOUT`]. The connect timeout stays [`DEFAULT_CONNECT_TIMEOUT`].
+    ///
+    /// For a caller that bounds each call itself and has calls that legitimately take longer than
+    /// 30 seconds, such as a year of a whole practice's invoices or time from Practice Manager: set
+    /// it to at least the longest deadline the caller applies, so that deadline, not this one,
+    /// decides. The practice-wide Practice Manager lists get the longer of this and their own
+    /// 300 seconds. Token requests use the same timeout. The token cache, the persistence hook
+    /// and the attempt observer carry over.
+    pub fn with_timeout(mut self, timeout: Duration) -> Result<Self, XeroError> {
+        let http_client = http_client_with_timeout(timeout)?;
+        self.token_manager = Arc::new(self.token_manager.with_http_client(http_client.clone()));
+        self.http_client = http_client;
+        self.timeout = timeout;
+        Ok(self)
+    }
+
+    /// The total timeout each request is sent with.
+    #[must_use]
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     /// The same client talking to `endpoints` instead of production. The token cache, the
@@ -319,6 +349,7 @@ impl XeroClient {
             rate_limiter: Arc::clone(&self.rate_limiter),
             connections_client: self.connections_client.clone(),
             endpoints: self.endpoints.clone(),
+            timeout: self.timeout,
         }
     }
 

@@ -413,3 +413,70 @@ async fn a_token_the_store_refused_fails_the_refresh_but_is_kept() {
         "new-access"
     );
 }
+
+/// A caller with its own, longer deadlines raises the client's timeout, and a slow answer then
+/// arrives instead of being cut off at the default.
+#[tokio::test]
+async fn a_raised_timeout_lets_a_slow_answer_arrive() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/slow"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(Duration::from_millis(300)),
+        )
+        .mount(&server)
+        .await;
+
+    let mut answers = Vec::new();
+    for timeout in [Duration::from_millis(100), Duration::from_secs(5)] {
+        let client = client_for(&server)
+            .await
+            .with_timeout(timeout)
+            .expect("client");
+        assert_eq!(client.timeout(), timeout);
+        let api = ApiClient::new(
+            server.uri(),
+            Uuid::new_v4(),
+            client.http_client.clone(),
+            client.token_manager.clone(),
+            client.rate_limiter(),
+        )
+        .with_token_override(Arc::new(stored_token()));
+        answers.push(
+            api.send_request::<serde_json::Value, ()>(Method::GET, "/slow", None, None)
+                .await,
+        );
+    }
+
+    let error = answers.remove(0).expect_err("cut off at 100 ms");
+    assert_eq!(error.kind(), ErrorKind::Transport);
+    assert_eq!(
+        answers.remove(0).expect("arrives within 5 s"),
+        json!({"ok": true})
+    );
+}
+
+/// Raising the timeout never shortens the practice-wide Practice Manager lists below their own.
+#[cfg(feature = "practice-manager")]
+#[tokio::test]
+async fn the_bulk_list_timeout_is_the_longer_of_the_two() {
+    let server = MockServer::start().await;
+    let default = client_for(&server).await;
+    assert_eq!(
+        default
+            .practice_manager_for_tenant(Uuid::new_v4())
+            .bulk_list_timeout,
+        Duration::from_secs(300)
+    );
+    let raised = default
+        .with_timeout(Duration::from_secs(600))
+        .expect("client");
+    assert_eq!(
+        raised
+            .practice_manager_for_tenant(Uuid::new_v4())
+            .bulk_list_timeout,
+        Duration::from_secs(600)
+    );
+}

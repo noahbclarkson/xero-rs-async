@@ -258,6 +258,23 @@ impl TokenManager {
         }
     }
 
+    /// The same manager sending its requests through `http_client`. Everything else is shared with
+    /// `self`, as with [`Self::with_endpoints`].
+    #[must_use]
+    pub(crate) fn with_http_client(&self, http_client: Client) -> Self {
+        // Not struct-update syntax: `TokenManager` implements `Drop`.
+        Self {
+            http_client,
+            client_id: self.client_id.clone(),
+            redirect_uri: self.redirect_uri.clone(),
+            auth_mode: self.auth_mode.clone(),
+            cached_token: Arc::clone(&self.cached_token),
+            persistence: Arc::clone(&self.persistence),
+            endpoints: self.endpoints.clone(),
+            observer: self.observer.clone(),
+        }
+    }
+
     /// A manager with the same credentials, endpoints and attempt observer but its own empty token
     /// cache and no persistence hook, for a per-connection client.
     #[must_use]
